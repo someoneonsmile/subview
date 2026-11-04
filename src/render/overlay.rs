@@ -31,6 +31,7 @@ use crate::cli::{Cli, PositionArg};
 use crate::protocol::{Caption, InputFormat};
 use crate::reader;
 use crate::render::layout::Align;
+use crate::render::vertical;
 use crate::signal;
 use crate::state::CaptionState;
 
@@ -96,6 +97,76 @@ struct RenderOptions {
     fade: u8,
 }
 
+/// 悬浮窗几何（像素）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Geometry {
+    width: u16,
+    height: u16,
+    x: i16,
+    y: i16,
+}
+
+/// 根据屏幕尺寸与命令行参数计算悬浮窗几何。
+///
+/// `--size` 是唯一的尺寸参数，含义随布局自适应：横版是窗口宽度（像素），
+/// 竖版是窗口高度（像素）。另一个维度自动：横版高度由 `--lines` 行数决定，
+/// 竖版宽度由 `--lines` 列数决定。
+fn compute_geometry(cli: &Cli, screen_width: i32, screen_height: i32) -> Geometry {
+    let (width, height) = if cli.vertical {
+        let cell = LINE_HEIGHT as i32;
+        let pad_x = PADDING_X as i32;
+        let pad_y = PADDING_Y as i32;
+        // 宽度自动：能容纳 `--lines` 列。
+        let min_width = cell + 2 * pad_x;
+        let max_width = (screen_width - 80).max(min_width);
+        let width = (i32::from(cli.lines) * cell + 2 * pad_x).min(max_width);
+        // 高度由 `--size` 指定，未指定时取屏幕高减上下边距。
+        let min_height = cell + 2 * pad_y;
+        let max_height = screen_height.max(min_height);
+        let default_height = (screen_height - 2 * SCREEN_MARGIN).max(min_height);
+        let height = match cli.size {
+            Some(requested) => i32::from(requested).clamp(min_height, max_height),
+            None => default_height.min(max_height),
+        };
+        (width, height)
+    } else {
+        let max_width = (screen_width - 80).max(320);
+        let default_width = (FONT_SIZE * 1.05 * DEFAULT_MAX_CHARS + 2.0 * PADDING_X).round() as i32;
+        let width = match cli.size {
+            // 悬浮窗模式下 --size 表示窗口宽度（像素）；不传时按约 15 个全角字估算。
+            Some(requested) => i32::from(requested).clamp(200, max_width),
+            None => default_width.min(max_width),
+        };
+        // 高度自动：`--lines` 行。
+        let lines = i32::from(cli.lines);
+        let height = lines * LINE_HEIGHT as i32 + 2 * PADDING_Y as i32;
+        (width, height)
+    };
+
+    // 中性位置按布局解释：横版沿垂直轴贴边（水平居中），竖版沿水平轴贴边（垂直居中）。
+    let (x, y) = if cli.vertical {
+        let y = ((screen_height - height) / 2).max(0);
+        match cli.position {
+            PositionArg::Start => (SCREEN_MARGIN, y),
+            PositionArg::End => ((screen_width - width - SCREEN_MARGIN).max(0), y),
+        }
+    } else {
+        let x = (screen_width - width) / 2;
+        let y = match cli.position {
+            PositionArg::Start => screen_height - height - SCREEN_MARGIN,
+            PositionArg::End => SCREEN_MARGIN,
+        };
+        (x, y)
+    };
+
+    Geometry {
+        width: width as u16,
+        height: height as u16,
+        x: x as i16,
+        y: y as i16,
+    }
+}
+
 struct WindowContext {
     connection: RustConnection,
     window: Window,
@@ -103,6 +174,7 @@ struct WindowContext {
     width: u16,
     height: u16,
     lsb_first: bool,
+    vertical: bool,
     font_system: FontSystem,
     swash_cache: SwashCache,
 }
@@ -121,21 +193,13 @@ impl WindowContext {
 
         let screen_width = i32::from(screen.width_in_pixels);
         let screen_height = i32::from(screen.height_in_pixels);
-        let max_width = (screen_width - 80).max(320);
-        let default_width = (FONT_SIZE * 1.05 * DEFAULT_MAX_CHARS + 2.0 * PADDING_X).round() as i32;
-        let width = match cli.width {
-            // 悬浮窗模式下 --width 表示窗口宽度（像素）；不传时按约 15 个全角字估算。
-            Some(requested) => i32::from(requested).clamp(200, max_width),
-            None => default_width.min(max_width),
-        };
-        let width = width as u16;
-        let lines = i32::from(cli.lines);
-        let height = (lines * LINE_HEIGHT as i32 + 2 * PADDING_Y as i32) as u16;
-        let x = ((screen_width - i32::from(width)) / 2) as i16;
-        let y = match cli.position {
-            PositionArg::Bottom => (screen_height - i32::from(height) - SCREEN_MARGIN) as i16,
-            PositionArg::Top => SCREEN_MARGIN as i16,
-        };
+        let geometry = compute_geometry(cli, screen_width, screen_height);
+        let Geometry {
+            width,
+            height,
+            x,
+            y,
+        } = geometry;
 
         let colormap = connection
             .generate_id()
@@ -204,7 +268,12 @@ impl WindowContext {
 
         if cli.debug {
             eprintln!(
-                "subview: overlay 窗口 id=0x{window:x} geometry={width}x{height}+{x}+{y} visual=0x{visual_id:x} lsb_first={lsb_first}"
+                "subview: overlay 窗口 id=0x{window:x} geometry={width}x{height}+{x}+{y} layout={} visual=0x{visual_id:x} lsb_first={lsb_first}",
+                if cli.vertical {
+                    "vertical"
+                } else {
+                    "horizontal"
+                }
             );
         }
 
@@ -215,6 +284,7 @@ impl WindowContext {
             width,
             height,
             lsb_first,
+            vertical: cli.vertical,
             font_system: FontSystem::new(),
             swash_cache: SwashCache::new(),
         })
@@ -351,6 +421,19 @@ impl WindowContext {
             return;
         }
 
+        if self.vertical {
+            draw_vertical_captions(
+                frame,
+                self.width,
+                self.height,
+                &text,
+                options.fade,
+                &mut self.font_system,
+                &mut self.swash_cache,
+            );
+            return;
+        }
+
         let width = i32::from(self.width);
         let height = i32::from(self.height);
         let fade_factor = f64::from(100 - options.fade) / 100.0;
@@ -446,6 +529,121 @@ impl WindowContext {
                 blend_pixel(frame, index, red, green, blue, alpha);
             },
         );
+    }
+}
+
+/// 竖版字幕：字从上到下、列从右到左（中文传统竖排）。
+///
+/// cosmic-text 只有横排排版，这里把每个 grapheme 单独排进自己的字框并居中，
+/// 再按“最新列在最左”的顺序逐列绘制。窗口高度决定每列字数，宽度决定列数。
+fn draw_vertical_captions(
+    frame: &mut [u32],
+    width: u16,
+    height: u16,
+    text: &str,
+    fade: u8,
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+) {
+    let width = i32::from(width);
+    let height = i32::from(height);
+    let fade_factor = f64::from(100 - fade) / 100.0;
+
+    // 半透明圆角背景条；linger 淡出时一起变淡。
+    let background_alpha = (u32::from(BACKGROUND_ALPHA) * u32::from(100 - fade) / 100) as u8;
+    draw_background(frame, width, height, CORNER_RADIUS, background_alpha);
+
+    let cell = LINE_HEIGHT;
+    let content_width = (width as f32 - 2.0 * PADDING_X).max(1.0);
+    let content_height = (height as f32 - 2.0 * PADDING_Y).max(1.0);
+    let capacity = ((content_height / cell) as usize).max(1);
+    let max_columns = ((content_width / cell) as usize).max(1);
+    let columns = vertical::split_columns(text, capacity, max_columns);
+    if columns.is_empty() {
+        return;
+    }
+
+    // 单字一个字框：buffer 宽高都是字框边长，让它横向居中排一个字。
+    let mut buffer = Buffer::new(font_system, Metrics::new(FONT_SIZE, LINE_HEIGHT));
+    buffer.set_size(Some(cell), Some(cell));
+
+    let mut coverage = vec![0u8; frame.len()];
+    for (column_index, column) in columns.iter().enumerate() {
+        let cell_x = PADDING_X + column_index as f32 * cell;
+        for (row_index, grapheme) in column.iter().enumerate() {
+            let cell_y = PADDING_Y + row_index as f32 * cell;
+            // 中文竖排惯例：逗号、顿号、句号挪到字框右上角。
+            let (shift_x, shift_y) = vertical::punctuation_shift(grapheme)
+                .map_or((0.0, 0.0), |(x, y)| (x * cell, y * cell));
+            buffer.set_text(
+                grapheme,
+                &Attrs::new(),
+                Shaping::Advanced,
+                Some(cosmic_text::Align::Center),
+            );
+            buffer.shape_until_scroll(font_system, false);
+            buffer.draw(
+                font_system,
+                swash_cache,
+                FINAL_COLOR,
+                |x, y, _, _, color| {
+                    let alpha = scaled_alpha(color, fade_factor);
+                    if alpha == 0 {
+                        return;
+                    }
+                    let left = (cell_x + shift_x) as i32;
+                    let top = (cell_y + shift_y) as i32;
+                    let px = left + x;
+                    let py = top + y;
+                    // 裁到字框内，避免相邻字互相覆盖。
+                    if px < cell_x as i32
+                        || px >= (cell_x + cell) as i32
+                        || py < cell_y as i32
+                        || py >= (cell_y + cell) as i32
+                        || px < 0
+                        || py < 0
+                        || px >= width
+                        || py >= height
+                    {
+                        return;
+                    }
+                    let index = py as usize * width as usize + px as usize;
+                    if coverage[index] < alpha {
+                        coverage[index] = alpha;
+                    }
+                },
+            );
+        }
+    }
+
+    // 阴影：先做盒式模糊再按偏移量投影，让文字在亮背景上也可读。
+    let mut shadow = coverage.clone();
+    blur_mask(
+        &mut shadow,
+        width as usize,
+        height as usize,
+        SHADOW_BLUR_RADIUS,
+        SHADOW_BLUR_PASSES,
+    );
+    blend_mask(
+        frame,
+        &shadow,
+        width,
+        height,
+        SHADOW_OFFSET_X,
+        SHADOW_OFFSET_Y,
+        SHADOW_ALPHA,
+    );
+
+    // 字形本体：覆盖率遮罩（已含淡出系数）直接按 white 混合，与横版第二遍绘制等价。
+    for y in 0..height {
+        for x in 0..width {
+            let alpha = coverage[(y * width + x) as usize];
+            if alpha == 0 {
+                continue;
+            }
+            blend_pixel(frame, (y * width + x) as usize, 255, 255, 255, alpha);
+        }
     }
 }
 
@@ -643,5 +841,102 @@ fn warn_if_no_compositor(connection: &RustConnection) {
     if matches!(result, Ok(true)) {
         eprintln!("subview: warning: 未检测到合成器（compositor），透明背景可能显示为黑色");
         eprintln!("subview: 提示：启动 picom / mutter / kwin 等合成器以启用透明");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser as _;
+
+    fn geometry(args: &[&str], screen_width: i32, screen_height: i32) -> Geometry {
+        let cli = Cli::try_parse_from(args).expect("参数应能解析");
+        compute_geometry(&cli, screen_width, screen_height)
+    }
+
+    #[test]
+    fn horizontal_geometry_is_unchanged() {
+        // 1920x1080、默认 2 行：默认宽 410px、高 84px、水平居中、底部留 60px。
+        let g = geometry(&["subview"], 1920, 1080);
+        assert_eq!(g.width, 410);
+        assert_eq!(g.height, 84);
+        assert_eq!(g.x, 755);
+        assert_eq!(g.y, 936);
+    }
+
+    #[test]
+    fn horizontal_end_position_is_top() {
+        let g = geometry(&["subview", "--position", "end"], 1920, 1080);
+        assert_eq!(g.x, 755);
+        assert_eq!(g.y, 60);
+    }
+
+    #[test]
+    fn horizontal_size_sets_window_width_only() {
+        // 横版：--size 是宽度，高度仍由 --lines 自动算。
+        let g = geometry(&["subview", "--size", "600"], 1920, 1080);
+        assert_eq!(g.width, 600);
+        assert_eq!(g.height, 84);
+        assert_eq!(g.x, 660);
+        assert_eq!(g.y, 936);
+    }
+
+    #[test]
+    fn horizontal_size_is_clamped() {
+        let g = geometry(&["subview", "--size", "10"], 1920, 1080);
+        assert_eq!(g.width, 200);
+        let g = geometry(&["subview", "--size", "5000"], 1920, 1080);
+        assert_eq!(g.width, 1840);
+    }
+
+    #[test]
+    fn vertical_defaults_use_lines_for_width() {
+        let g = geometry(&["subview", "--vertical"], 1920, 1080);
+        // 2 列 × 32px + 左右内边距 16px。
+        assert_eq!(g.width, 96);
+        // 屏幕高减上下边距 60px。
+        assert_eq!(g.height, 960);
+        // 默认 start：竖版贴左，垂直居中。
+        assert_eq!(g.x, 60);
+        assert_eq!(g.y, 60);
+    }
+
+    #[test]
+    fn vertical_size_sets_window_height_only() {
+        // 竖版：--size 是高度，宽度仍由 --lines 自动算。
+        let g = geometry(&["subview", "--vertical", "--size", "800"], 1920, 1080);
+        assert_eq!(g.width, 96);
+        assert_eq!(g.height, 800);
+        assert_eq!(g.x, 60);
+        assert_eq!(g.y, 140);
+    }
+
+    #[test]
+    fn vertical_size_is_clamped() {
+        // 高度下限能放下一个字框。
+        let g = geometry(&["subview", "--vertical", "--size", "10"], 1920, 1080);
+        assert_eq!(g.height, 52);
+        let g = geometry(&["subview", "--vertical", "--size", "5000"], 1920, 1080);
+        assert_eq!(g.height, 1080);
+        assert_eq!(g.y, 0);
+    }
+
+    #[test]
+    fn vertical_end_position_is_right() {
+        let g = geometry(
+            &[
+                "subview",
+                "--vertical",
+                "--position",
+                "end",
+                "--size",
+                "800",
+            ],
+            1920,
+            1080,
+        );
+        // 贴右边缘，垂直居中。
+        assert_eq!(g.x, 1764);
+        assert_eq!(g.y, 140);
     }
 }

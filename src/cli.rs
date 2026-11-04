@@ -38,10 +38,13 @@ impl From<AlignArg> for Align {
 }
 
 /// 悬浮窗位置。
+///
+/// 取值是中性的 `start` / `end`，实际方位随布局：横版沿垂直轴
+/// （start = 贴底、end = 贴顶），竖版沿水平轴（start = 贴左、end = 贴右）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum PositionArg {
-    Bottom,
-    Top,
+    Start,
+    End,
 }
 
 fn parse_linger(value: &str) -> Result<f64, String> {
@@ -69,13 +72,13 @@ pub struct Cli {
     )]
     pub lines: u16,
 
-    /// 折行宽度（默认终端宽度）
+    /// 折行宽度（终端，列）或窗口尺寸（悬浮窗，像素：横版为宽、竖版为高）
     #[arg(
         long,
         value_name = "N",
         value_parser = clap::value_parser!(u16).range(4..)
     )]
-    pub width: Option<u16>,
+    pub size: Option<u16>,
 
     /// 水平对齐
     #[arg(long, value_enum, default_value_t = AlignArg::Left, value_name = "ALIGN")]
@@ -97,9 +100,13 @@ pub struct Cli {
     #[arg(long)]
     pub tui: bool,
 
-    /// 悬浮窗位置
-    #[arg(long, value_enum, default_value_t = PositionArg::Bottom, value_name = "POS")]
+    /// 悬浮窗位置：横版 start 贴底 / end 贴顶，竖版 start 贴左 / end 贴右
+    #[arg(long, value_enum, default_value_t = PositionArg::Start, value_name = "POS")]
     pub position: PositionArg,
+
+    /// 竖版悬浮窗：字从上到下、列从右到左（仅桌面悬浮窗）
+    #[arg(long, conflicts_with_all = ["tui", "raw"])]
+    pub vertical: bool,
 
     /// 打印调试信息到 stderr
     #[arg(long)]
@@ -133,7 +140,43 @@ mod tests {
         assert_eq!(cli.lines, 2);
         assert_eq!(cli.align, AlignArg::Left);
         assert_eq!(cli.linger, 0.0);
+        assert!(!cli.vertical);
+        assert_eq!(cli.size, None);
+        assert_eq!(cli.position, PositionArg::Start);
         assert!(!cli.raw && !cli.tui);
+    }
+
+    #[test]
+    fn parses_position_for_both_orientations() {
+        let cli = Cli::try_parse_from(["subview", "--position", "end"]).expect("位置参数应能解析");
+        assert_eq!(cli.position, PositionArg::End);
+
+        let cli = Cli::try_parse_from(["subview", "--vertical", "--position", "end"])
+            .expect("竖版位置参数应能解析");
+        assert_eq!(cli.position, PositionArg::End);
+    }
+
+    #[test]
+    fn rejects_old_position_names() {
+        assert!(Cli::try_parse_from(["subview", "--position", "bottom"]).is_err());
+        assert!(Cli::try_parse_from(["subview", "--position", "top"]).is_err());
+    }
+
+    #[test]
+    fn parses_size_for_every_backend() {
+        let cli = Cli::try_parse_from(["subview", "--size", "800"]).expect("尺寸参数应能解析");
+        assert_eq!(cli.size, Some(800));
+
+        let cli = Cli::try_parse_from(["subview", "--vertical", "--size", "800"])
+            .expect("竖版尺寸参数应能解析");
+        assert!(cli.vertical);
+        assert_eq!(cli.size, Some(800));
+    }
+
+    #[test]
+    fn vertical_conflicts_with_terminal_modes() {
+        assert!(Cli::try_parse_from(["subview", "--vertical", "--tui"]).is_err());
+        assert!(Cli::try_parse_from(["subview", "--vertical", "--raw"]).is_err());
     }
 
     #[test]

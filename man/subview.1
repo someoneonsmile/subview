@@ -22,7 +22,10 @@ arecord \-q \-f S16_LE \-r 16000 \-c 1 | whisper\-stream \-m model.bin | subview
 切换到终端界面，或用
 .B \-\-raw
 作为纯 ANSI 过滤器使用。
-没有图形环境（无法连接 X11）时，默认模式自动回退到终端界面。
+用
+.B \-\-vertical
+可以把悬浮窗切成竖版：字从上到下、列从右到左，适合竖屏画面。
+没有图形环境（无法连接 X11）时，默认模式自动回退到终端界面；竖版则直接报错退出。
 .PP
 当标准输入是终端（没有管道）时，打印用法提示并以退出码 2 结束。
 .SH 选项
@@ -34,13 +37,21 @@ arecord \-q \-f S16_LE \-r 16000 \-c 1 | whisper\-stream \-m model.bin | subview
 .BI \-\-lines " N"
 保留最近几条字幕，默认 3，最小 1。
 .TP
-.BI \-\-width " N"
-终端模式下是折行宽度（列），默认终端宽度；
-悬浮窗模式下是窗口宽度（像素，默认屏幕宽度的 75%%，范围 200 到屏幕宽度减 80）。
+.BI \-\-size " N"
+唯一的尺寸参数，含义随后端与布局自适应：
+终端模式下是折行宽度（列，默认终端宽度）；
+悬浮窗横版下是窗口宽度（像素，默认屏幕宽度的 75%%，范围 200 到屏幕宽度减 80）；
+竖版悬浮窗下是窗口高度（像素，默认屏幕高度减 120，范围 52 到屏幕高度）。
+另一个维度自动：横版高度由
+.B \-\-lines
+行数决定，竖版宽度由
+.B \-\-lines
+列数决定。
 .TP
 .BI \-\-align " left|center"
 水平对齐，默认
 .BR left 。
+竖版下不生效。
 .TP
 .BI \-\-linger " SEC"
 最后一条字幕驻留多少秒后淡出，默认 0（常驻）。
@@ -57,9 +68,18 @@ arecord \-q \-f S16_LE \-r 16000 \-c 1 | whisper\-stream \-m model.bin | subview
 .B \-\-tui
 强制使用终端界面（默认是桌面悬浮窗）。
 .TP
-.BI \-\-position " bottom|top"
+.BI \-\-position " start|end"
 悬浮窗位置，默认
-.BR bottom 。
+.BR start 。
+横版下 start 贴底、end 贴顶；竖版下 start 贴左、end 贴右（垂直居中）。
+.TP
+.B \-\-vertical
+竖版悬浮窗：字从上到下、列从右到左（仅桌面悬浮窗）。
+与
+.B \-\-tui
+/
+.B \-\-raw
+互斥；没有图形环境时直接报错退出。
 .TP
 .B \-\-debug
 把诊断信息写到标准错误。
@@ -121,6 +141,9 @@ arecord \-q \-f S16_LE \-r 16000 \-c 1 | whisper\-stream \-m model.bin | subview
 .TP
 .B producer | subview \-\-lines 2 \-\-align center
 桌面悬浮窗居中显示最近两条。
+.TP
+.B producer | subview \-\-vertical \-\-size 600
+竖版悬浮窗显示竖排字幕（字从上到下、列从右到左，窗口高 600 像素）。
 .TP
 .B producer | subview \-\-tui
 在终端里显示字幕。

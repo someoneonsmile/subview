@@ -6,6 +6,8 @@ pub mod layout;
 pub mod overlay;
 pub mod raw;
 pub mod tui;
+#[cfg(feature = "overlay")]
+pub mod vertical;
 
 use std::io;
 

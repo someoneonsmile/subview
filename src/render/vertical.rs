@@ -1,0 +1,139 @@
+//! 竖排布局：字从上到下、列从右到左（中文传统竖排）。
+//!
+//! 这里只做与字体无关的切列：把连续文本流按每列容量切成若干竖排列，
+//! 只保留最新的若干列。具体字形光栅化由悬浮窗后端完成。
+
+use unicode_segmentation::UnicodeSegmentation;
+
+/// 竖排的一列，按从上到下的顺序保存 grapheme。
+pub type Column = Vec<String>;
+
+/// 把文本流切成竖排列。
+///
+/// - `capacity`：每列最多容纳的 grapheme 数（由窗口高度决定）
+/// - `max_columns`：最多保留的列数（由窗口宽度决定）
+///
+/// 列从文本开头开始切分（首列从顶部向下填满），因此新内容只会填满当前的
+/// 最后一列、再开新列，已有列的内容不会重排；只会把过旧的列挤出窗口。
+/// 返回顺序即显示顺序：索引 0 是最新（窗口最左、可能未填满）一列，
+/// 越靠后越旧（越靠右）。
+///
+/// 按 grapheme 边界切分，保证 CJK、emoji、组合字符不会被切开。
+pub fn split_columns(text: &str, capacity: usize, max_columns: usize) -> Vec<Column> {
+    if capacity == 0 || max_columns == 0 {
+        return Vec::new();
+    }
+
+    let graphemes: Vec<&str> = text.graphemes(true).collect();
+    let chunk_count = graphemes.len().div_ceil(capacity);
+    let skip = chunk_count.saturating_sub(max_columns);
+    let mut columns: Vec<Column> = graphemes
+        .chunks(capacity)
+        .skip(skip)
+        .map(|chunk| {
+            chunk
+                .iter()
+                .map(|grapheme| (*grapheme).to_string())
+                .collect()
+        })
+        .collect();
+    // 显示时最新的列在最左，所以把文本顺序翻转过来。
+    columns.reverse();
+    columns
+}
+
+/// 竖排中标点的位移（单位：字框边长），`None` 表示保持居中。
+///
+/// 中文竖排惯例：逗号、顿号、句号放在字框右上角，而不是像横排那样落在
+/// 左下角。这里只处理随正文出现的标点；冒号、分号、叹号、问号在竖排中
+/// 保持居中，不位移。
+pub fn punctuation_shift(grapheme: &str) -> Option<(f32, f32)> {
+    match grapheme {
+        "，" | "。" | "、" => Some((0.55, -0.55)),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn columns(text: &str, capacity: usize, max_columns: usize) -> Vec<Vec<String>> {
+        split_columns(text, capacity, max_columns)
+    }
+
+    #[test]
+    fn newest_column_comes_first() {
+        // 6 个字、每列 2 个：只留最新 2 列，最新列在索引 0（最左）。
+        assert_eq!(
+            columns("abcdef", 2, 2),
+            vec![vec!["e", "f"], vec!["c", "d"]]
+        );
+    }
+
+    #[test]
+    fn cjk_is_split_by_grapheme() {
+        assert_eq!(
+            columns("你好世界", 2, 2),
+            vec![vec!["世", "界"], vec!["你", "好"]]
+        );
+    }
+
+    #[test]
+    fn short_text_yields_single_column() {
+        assert_eq!(columns("你好", 8, 2), vec![vec!["你", "好"]]);
+    }
+
+    #[test]
+    fn empty_text_yields_no_columns() {
+        assert!(columns("", 8, 2).is_empty());
+    }
+
+    #[test]
+    fn zero_capacity_or_columns_yields_nothing() {
+        assert!(columns("你好", 0, 2).is_empty());
+        assert!(columns("你好", 2, 0).is_empty());
+    }
+
+    #[test]
+    fn column_with_single_capacity_keeps_latest_chars() {
+        assert_eq!(columns("你好世界", 1, 2), vec![vec!["界"], vec!["世"]]);
+    }
+
+    #[test]
+    fn emoji_and_combined_graphemes_are_not_split() {
+        let family = "👨‍👩‍👧‍👦";
+        let text = format!("你{family}好");
+        assert_eq!(
+            columns(&text, 1, 3),
+            vec![vec!["好"], vec![family], vec!["你"]]
+        );
+    }
+
+    #[test]
+    fn partial_newest_column_is_leftmost() {
+        // 7 个字、每列 3 个：最新一列只有 1 个字，且在最左（从顶部开始填）。
+        assert_eq!(
+            columns("abcdefg", 3, 2),
+            vec![vec!["g"], vec!["d", "e", "f"]]
+        );
+    }
+
+    #[test]
+    fn existing_columns_do_not_reflow_when_text_grows() {
+        // 列从文本开头锚定：新增内容只进入最新的列，旧列内容保持不动。
+        let before = columns("abcdef", 3, 2);
+        let after = columns("abcdefg", 3, 2);
+        assert_eq!(before, vec![vec!["d", "e", "f"], vec!["a", "b", "c"]]);
+        assert_eq!(after[1], before[0]);
+    }
+
+    #[test]
+    fn punctuation_is_shifted_in_vertical_mode() {
+        assert!(punctuation_shift("，").is_some());
+        assert!(punctuation_shift("。").is_some());
+        assert!(punctuation_shift("、").is_some());
+        assert!(punctuation_shift("你").is_none());
+        assert!(punctuation_shift("？").is_none());
+    }
+}

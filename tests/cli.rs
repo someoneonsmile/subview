@@ -123,10 +123,30 @@ fn raw_mode_keeps_control_characters() {
 #[test]
 fn rejects_invalid_arguments() {
     subview().args(["--lines", "0"]).assert().code(2);
-    subview().args(["--width", "3"]).assert().code(2);
+    subview().args(["--size", "3"]).assert().code(2);
     subview().args(["--linger", "-1"]).assert().code(2);
     subview().args(["--raw", "--overlay"]).assert().code(2);
     subview().args(["--format", "bogus"]).assert().code(2);
+    subview().args(["--vertical", "--tui"]).assert().code(2);
+    subview().args(["--vertical", "--raw"]).assert().code(2);
+    // 旧参数已合并/改名，应被拒绝。
+    subview().args(["--width", "200"]).assert().code(2);
+    subview().args(["--height", "800"]).assert().code(2);
+    subview().args(["--position", "bottom"]).assert().code(2);
+    subview().args(["--position", "top"]).assert().code(2);
+}
+
+#[test]
+fn vertical_mode_needs_x11_and_does_not_fall_back_to_terminal() {
+    // 竖版只有悬浮窗支持：没有 X11 时应明确报错退出，而不是静默变成横版终端界面。
+    subview()
+        .args(["--vertical", "--size", "800", "--position", "end"])
+        .env_remove("DISPLAY")
+        .env_remove("WAYLAND_DISPLAY")
+        .write_stdin("你好\n")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("竖版"));
 }
 
 #[test]

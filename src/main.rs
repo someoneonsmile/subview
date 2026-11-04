@@ -61,12 +61,14 @@ fn run() -> i32 {
             "filter"
         } else if cli.tui {
             "tui"
+        } else if cli.vertical {
+            "overlay-vertical"
         } else {
             "overlay"
         };
         eprintln!(
-            "subview: mode={mode} format={:?} lines={} width={:?} align={:?} linger={} color={}",
-            format, cli.lines, cli.width, cli.align, cli.linger, !cli.no_color
+            "subview: mode={mode} format={:?} lines={} size={:?} align={:?} linger={} color={}",
+            format, cli.lines, cli.size, cli.align, cli.linger, !cli.no_color
         );
     }
 
@@ -88,6 +90,11 @@ fn run() -> i32 {
         match render::overlay::run(&cli, format, true) {
             render::overlay::Outcome::Exited(code) => return code,
             render::overlay::Outcome::Unavailable(reason) => {
+                // 竖版只有悬浮窗后端支持，不能静默回退成横版终端界面。
+                if cli.vertical {
+                    eprintln!("subview: 竖版界面需要桌面悬浮窗（X11）：{reason}");
+                    return 1;
+                }
                 eprintln!("subview: {reason}");
                 eprintln!("subview: 回退到终端界面（可用 --tui 显式指定）");
             }
@@ -95,6 +102,12 @@ fn run() -> i32 {
     }
     #[cfg(not(feature = "overlay"))]
     {
+        if cli.vertical {
+            eprintln!(
+                "subview: 竖版界面需要桌面悬浮窗；该二进制未编译悬浮窗支持（--no-default-features）"
+            );
+            return 1;
+        }
         eprintln!("subview: 该二进制未编译悬浮窗支持（--no-default-features），回退到终端界面");
     }
     run_terminal(&cli, format, stdout_is_tty)
@@ -150,7 +163,7 @@ fn stream_loop(
 
     let align = Align::from(cli.align);
     let color = cli.color_enabled();
-    let width_limit = cli.width.map(usize::from);
+    let width_limit = cli.size.map(usize::from);
     let stdout = io::stdout();
 
     match mode {

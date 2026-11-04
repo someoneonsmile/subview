@@ -1,0 +1,140 @@
+.TH SUBVIEW 1 "2026-11-02" "subview 0.1.0" "用户命令"
+.SH 名称
+subview \- 把标准输入的字幕流实时显示到屏幕
+.SH 概要
+.B subview
+.RI [ 选项 ]
+.SH 描述
+.B subview
+从标准输入读取字幕流，实时显示最近若干条字幕。
+它只负责显示：语音识别、翻译等由上游程序完成，通过管道连接：
+.PP
+.RS
+arecord \-q \-f S16_LE \-r 16000 \-c 1 | whisper\-stream \-m model.bin | subview
+.RE
+.PP
+默认显示为桌面悬浮窗：透明背景、点击穿透、置顶、无边框。
+透明背景需要正在运行的 X11 合成器（picom、mutter、kwin、xfwm4 等）；
+没有合成器时背景显示为黑色。
+.PP
+可以用
+.B \-\-tui
+切换到终端界面，或用
+.B \-\-raw
+作为纯 ANSI 过滤器使用。
+没有图形环境（无法连接 X11）时，默认模式自动回退到终端界面。
+.PP
+当标准输入是终端（没有管道）时，打印用法提示并以退出码 2 结束。
+.SH 选项
+.TP
+.BI \-\-format " plain|jsonl"
+输入格式，默认
+.BR plain 。
+.TP
+.BI \-\-lines " N"
+保留最近几条字幕，默认 3，最小 1。
+.TP
+.BI \-\-width " N"
+终端模式下是折行宽度（列），默认终端宽度；
+悬浮窗模式下是窗口宽度（像素，默认屏幕宽度的 75%%，范围 200 到屏幕宽度减 80）。
+.TP
+.BI \-\-align " left|center"
+水平对齐，默认
+.BR left 。
+.TP
+.BI \-\-linger " SEC"
+最后一条字幕驻留多少秒后淡出，默认 0（常驻）。
+.TP
+.B \-\-no\-color
+关闭颜色与文字属性。同时遵守
+.B NO_COLOR
+环境变量。
+.TP
+.B \-\-raw
+纯 ANSI 过滤器模式：不接管屏幕，在原地更新字幕区域。
+当标准输出不是终端时自动降级为纯文本（每个定稿一行）。
+.TP
+.B \-\-tui
+强制使用终端界面（默认是桌面悬浮窗）。
+.TP
+.BI \-\-position " bottom|top"
+悬浮窗位置，默认
+.BR bottom 。
+.TP
+.B \-\-debug
+把诊断信息写到标准错误。
+.TP
+.B \-h ", " \-\-help
+显示帮助。
+.TP
+.B \-V ", " \-\-version
+显示版本。
+.SH 输入协议
+默认
+.B plain
+格式借用终端行语义：
+.TP
+.B \en
+提交（定稿）一条字幕。
+.TP
+.B \er
+覆盖当前显示内容（中间结果，可丢弃）。
+.TP
+空行
+清屏。
+.PP
+.B \-\-format jsonl
+时，每行是一个 JSON 对象，字段为
+.BR event
+（partial / final / clear）、
+.BR text " 与可选的 " speaker 。
+完整规范见 docs/protocol.md。
+.SH 退出码
+.TP
+.B 0
+标准输入结束，正常退出。
+.TP
+.B 1
+运行时错误。
+.TP
+.B 2
+用法错误（参数非法，或默认模式下标准输出不是终端）。
+.TP
+.B 130
+被 SIGINT 中断（终端已恢复）。
+.TP
+.B 143
+被 SIGTERM 中断（终端已恢复）。
+.SH 环境变量
+.TP
+.B NO_COLOR
+存在即关闭颜色。
+.TP
+.B TERM
+为
+.B dumb
+时视为无 ANSI 能力，降级为纯文本输出。
+.SH 示例
+.TP
+.B printf '你好\\n世界\\n' | subview
+显示两条字幕。
+.TP
+.B producer | subview \-\-lines 2 \-\-align center
+桌面悬浮窗居中显示最近两条。
+.TP
+.B producer | subview \-\-tui
+在终端里显示字幕。
+.TP
+.B producer | subview \-\-raw | tee session.log
+原地显示并同时录制。
+.SH 环境
+.TP
+.B DISPLAY
+X11 显示名；默认模式下连接 X11 使用。未设置时会回退到终端界面。
+.TP
+.B XAUTHORITY
+X11 认证文件路径（通常由会话自动设置）。
+.SH 参见
+.BR whisper.cpp (1),
+.BR tmux (1),
+.BR picom (1)

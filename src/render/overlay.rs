@@ -54,13 +54,17 @@ const FINAL_COLOR: Color = Color::rgb(255, 255, 255);
 /// 阴影水平偏移（像素）。
 const SHADOW_OFFSET_X: i32 = 0;
 /// 阴影垂直偏移（像素）。
-const SHADOW_OFFSET_Y: i32 = 2;
+const SHADOW_OFFSET_Y: i32 = 1;
 /// 阴影模糊半径（像素）。
-const SHADOW_BLUR_RADIUS: usize = 5;
+const SHADOW_BLUR_RADIUS: usize = 3;
 /// 阴影模糊迭代次数（越大越柔和）。
-const SHADOW_BLUR_PASSES: usize = 3;
+const SHADOW_BLUR_PASSES: usize = 2;
 /// 阴影不透明度（0–255）。
-const SHADOW_ALPHA: u8 = 150;
+const SHADOW_ALPHA: u8 = 90;
+/// 描边向外扩张的半径（像素）：给字加一圈硬边，提高任意背景下的对比度。
+const OUTLINE_RADIUS: usize = 1;
+/// 描边不透明度（0–255）。
+const OUTLINE_ALPHA: u8 = 120;
 /// linger 触发后的淡出时长（秒）。
 const FADE_SECS: f64 = 0.8;
 /// 主循环轮询间隔。
@@ -518,6 +522,10 @@ impl WindowContext {
             SHADOW_ALPHA,
         );
 
+        // 清晰描边：白字在任何桌面背景上都有硬边，避免半透明背景发灰。
+        let outline = outline_mask(&coverage, width as usize, height as usize, OUTLINE_RADIUS);
+        blend_mask(frame, &outline, width, height, 0, 0, OUTLINE_ALPHA);
+
         // 第二遍：按文字颜色混合字形本体。
         buffer.draw(
             &mut self.font_system,
@@ -652,6 +660,10 @@ fn draw_vertical_captions(
         SHADOW_ALPHA,
     );
 
+    // 清晰描边：与横版一致，给竖排白字也加一圈硬边。
+    let outline = outline_mask(&coverage, width as usize, height as usize, OUTLINE_RADIUS);
+    blend_mask(frame, &outline, width, height, 0, 0, OUTLINE_ALPHA);
+
     // 字形本体：覆盖率遮罩（已含淡出系数）直接按 white 混合，与横版第二遍绘制等价。
     for y in 0..height {
         for x in 0..width {
@@ -691,6 +703,39 @@ fn draw_background(frame: &mut [u32], width: i32, height: i32, radius: i32, alph
             blend_pixel(frame, index, 0, 0, 0, alpha);
         }
     }
+}
+
+/// 用可分离的最大值滤波把覆盖率向外扩张 `radius` 像素，生成清晰描边的遮罩。
+fn outline_mask(mask: &[u8], width: usize, height: usize, radius: usize) -> Vec<u8> {
+    if radius == 0 || width == 0 || height == 0 {
+        return mask.to_vec();
+    }
+    let mut horizontal = vec![0u8; mask.len()];
+    for y in 0..height {
+        let row = y * width;
+        for x in 0..width {
+            let start = x.saturating_sub(radius);
+            let end = (x + radius).min(width - 1);
+            let mut peak = 0u8;
+            for nx in start..=end {
+                peak = peak.max(mask[row + nx]);
+            }
+            horizontal[row + x] = peak;
+        }
+    }
+    let mut outline = vec![0u8; mask.len()];
+    for x in 0..width {
+        for y in 0..height {
+            let start = y.saturating_sub(radius);
+            let end = (y + radius).min(height - 1);
+            let mut peak = 0u8;
+            for ny in start..=end {
+                peak = peak.max(horizontal[ny * width + x]);
+            }
+            outline[y * width + x] = peak;
+        }
+    }
+    outline
 }
 
 /// 对遮罩做多遍盒式模糊（水平 + 垂直），生成柔和阴影边缘。
@@ -962,6 +1007,30 @@ mod tests {
         // 96px 两列窗口：只有一列时贴右（48px），满列时从左右内边距之间铺满（16px）。
         assert_eq!(vertical_block_start_x(96, 1, LINE_HEIGHT), 48.0);
         assert_eq!(vertical_block_start_x(96, 2, LINE_HEIGHT), 16.0);
+    }
+
+    #[test]
+    fn outline_mask_expands_coverage_by_radius() {
+        let (width, height) = (7usize, 7usize);
+        let mut mask = vec![0u8; width * height];
+        mask[3 * width + 3] = 200;
+
+        let outline = outline_mask(&mask, width, height, 1);
+        // 中心保持原值，四周一圈被扩张为同一覆盖率。
+        assert_eq!(outline[3 * width + 3], 200);
+        for dy in -1i32..=1 {
+            for dx in -1i32..=1 {
+                let x = (3 + dx) as usize;
+                let y = (3 + dy) as usize;
+                assert_eq!(outline[y * width + x], 200);
+            }
+        }
+        // 半径之外不受影响。
+        assert_eq!(outline[0], 0);
+        assert_eq!(outline[5 * width + 3], 0);
+
+        // radius = 0 时是恒等变换。
+        assert_eq!(outline_mask(&mask, width, height, 0), mask);
     }
 
     #[test]

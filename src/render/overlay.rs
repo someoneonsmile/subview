@@ -45,8 +45,6 @@ const PADDING_X: f32 = 16.0;
 const PADDING_Y: f32 = 10.0;
 /// 窗口距屏幕底部的边距（像素）。
 const SCREEN_MARGIN: i32 = 60;
-/// 字幕条背景不透明度（0–255，越低越透）。
-const BACKGROUND_ALPHA: u8 = 30;
 /// 字幕条圆角半径（像素）。
 const CORNER_RADIUS: i32 = 10;
 /// 默认窗口宽度按多少个全角字符估算。
@@ -95,6 +93,8 @@ pub fn run(cli: &Cli, format: InputFormat, strip_control: bool) -> Outcome {
 struct RenderOptions {
     align: Align,
     fade: u8,
+    /// 背景条不透明度（0–255，淡出时按进度递减）。
+    background_alpha: u8,
 }
 
 /// 悬浮窗几何（像素）。
@@ -144,11 +144,12 @@ fn compute_geometry(cli: &Cli, screen_width: i32, screen_height: i32) -> Geometr
     };
 
     // 中性位置按布局解释：横版沿垂直轴贴边（水平居中），竖版沿水平轴贴边（垂直居中）。
+    // 竖版 start 贴右、end 贴左：竖排从右往左读，start 应对应阅读起点一侧。
     let (x, y) = if cli.vertical {
         let y = ((screen_height - height) / 2).max(0);
         match cli.position {
-            PositionArg::Start => (SCREEN_MARGIN, y),
-            PositionArg::End => ((screen_width - width - SCREEN_MARGIN).max(0), y),
+            PositionArg::Start => ((screen_width - width - SCREEN_MARGIN).max(0), y),
+            PositionArg::End => (SCREEN_MARGIN, y),
         }
     } else {
         let x = (screen_width - width) / 2;
@@ -369,13 +370,21 @@ impl WindowContext {
             if needs_render || changed || exposed {
                 needs_render = false;
                 let state = state.lock().map_err(|_| "字幕状态锁已中毒".to_string())?;
-                let options = RenderOptions { align, fade };
+                let options = RenderOptions {
+                    align,
+                    fade,
+                    background_alpha: cli.background_alpha,
+                };
                 self.render(&state, &options)?;
             }
 
             if eof.load(Ordering::Acquire) && !dirty.load(Ordering::Acquire) {
                 let state = state.lock().map_err(|_| "字幕状态锁已中毒".to_string())?;
-                let options = RenderOptions { align, fade };
+                let options = RenderOptions {
+                    align,
+                    fade,
+                    background_alpha: cli.background_alpha,
+                };
                 self.render(&state, &options)?;
                 let _ = self.connection.destroy_window(self.window);
                 let _ = self.connection.flush();
@@ -427,7 +436,7 @@ impl WindowContext {
                 self.width,
                 self.height,
                 &text,
-                options.fade,
+                options,
                 &mut self.font_system,
                 &mut self.swash_cache,
             );
@@ -440,7 +449,7 @@ impl WindowContext {
 
         // 半透明圆角背景条（类似 yt-live-sub）；linger 淡出时一起变淡。
         let background_alpha =
-            (u32::from(BACKGROUND_ALPHA) * u32::from(100 - options.fade) / 100) as u8;
+            (u32::from(options.background_alpha) * u32::from(100 - options.fade) / 100) as u8;
         draw_background(frame, width, height, CORNER_RADIUS, background_alpha);
 
         let content_width = (width as f32 - 2.0 * PADDING_X).max(1.0);
@@ -532,25 +541,32 @@ impl WindowContext {
     }
 }
 
+/// 竖排内容块的水平起点：列数不足一窗时整体贴右（竖排从右往左写，start 侧在右）。
+fn vertical_block_start_x(width: i32, columns: usize, cell: f32) -> f32 {
+    (width as f32 - PADDING_X - columns as f32 * cell).max(PADDING_X)
+}
+
 /// 竖版字幕：字从上到下、列从右到左（中文传统竖排）。
 ///
 /// cosmic-text 只有横排排版，这里把每个 grapheme 单独排进自己的字框并居中，
-/// 再按“最新列在最左”的顺序逐列绘制。窗口高度决定每列字数，宽度决定列数。
+/// 再按“最新列在最左”的顺序逐列绘制；列不足一窗时整体贴右（竖排 start 侧在右）。
+/// 窗口高度决定每列字数，宽度决定列数。
 fn draw_vertical_captions(
     frame: &mut [u32],
     width: u16,
     height: u16,
     text: &str,
-    fade: u8,
+    options: &RenderOptions,
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
 ) {
     let width = i32::from(width);
     let height = i32::from(height);
-    let fade_factor = f64::from(100 - fade) / 100.0;
+    let fade_factor = f64::from(100 - options.fade) / 100.0;
 
     // 半透明圆角背景条；linger 淡出时一起变淡。
-    let background_alpha = (u32::from(BACKGROUND_ALPHA) * u32::from(100 - fade) / 100) as u8;
+    let background_alpha =
+        (u32::from(options.background_alpha) * u32::from(100 - options.fade) / 100) as u8;
     draw_background(frame, width, height, CORNER_RADIUS, background_alpha);
 
     let cell = LINE_HEIGHT;
@@ -568,8 +584,9 @@ fn draw_vertical_captions(
     buffer.set_size(Some(cell), Some(cell));
 
     let mut coverage = vec![0u8; frame.len()];
+    let block_x = vertical_block_start_x(width, columns.len(), cell);
     for (column_index, column) in columns.iter().enumerate() {
-        let cell_x = PADDING_X + column_index as f32 * cell;
+        let cell_x = block_x + column_index as f32 * cell;
         for (row_index, grapheme) in column.iter().enumerate() {
             let cell_y = PADDING_Y + row_index as f32 * cell;
             // 中文竖排惯例：逗号、顿号、句号挪到字框右上角。
@@ -896,8 +913,8 @@ mod tests {
         assert_eq!(g.width, 96);
         // 屏幕高减上下边距 60px。
         assert_eq!(g.height, 960);
-        // 默认 start：竖版贴左，垂直居中。
-        assert_eq!(g.x, 60);
+        // 默认 start：竖版贴右，垂直居中。
+        assert_eq!(g.x, 1764);
         assert_eq!(g.y, 60);
     }
 
@@ -907,7 +924,7 @@ mod tests {
         let g = geometry(&["subview", "--vertical", "--size", "800"], 1920, 1080);
         assert_eq!(g.width, 96);
         assert_eq!(g.height, 800);
-        assert_eq!(g.x, 60);
+        assert_eq!(g.x, 1764);
         assert_eq!(g.y, 140);
     }
 
@@ -922,7 +939,7 @@ mod tests {
     }
 
     #[test]
-    fn vertical_end_position_is_right() {
+    fn vertical_end_position_is_left() {
         let g = geometry(
             &[
                 "subview",
@@ -935,8 +952,29 @@ mod tests {
             1920,
             1080,
         );
-        // 贴右边缘，垂直居中。
-        assert_eq!(g.x, 1764);
+        // 贴左边缘，垂直居中。
+        assert_eq!(g.x, 60);
         assert_eq!(g.y, 140);
+    }
+
+    #[test]
+    fn vertical_columns_hug_right_when_not_full() {
+        // 96px 两列窗口：只有一列时贴右（48px），满列时从左右内边距之间铺满（16px）。
+        assert_eq!(vertical_block_start_x(96, 1, LINE_HEIGHT), 48.0);
+        assert_eq!(vertical_block_start_x(96, 2, LINE_HEIGHT), 16.0);
+    }
+
+    #[test]
+    fn background_alpha_controls_opacity() {
+        let (width, height) = (40usize, 40usize);
+        let mut frame = vec![0u32; width * height];
+        draw_background(&mut frame, width as i32, height as i32, 0, 30);
+        // premultiplied ARGB：黑色、不透明度 30。
+        assert_eq!(frame[(height / 2) * width + width / 2] >> 24, 30);
+
+        // 0 = 完全透明，不写入任何像素（只有文字/阴影会留下非零像素）。
+        let mut transparent = vec![0u32; width * height];
+        draw_background(&mut transparent, width as i32, height as i32, 0, 0);
+        assert!(transparent.iter().all(|&pixel| pixel == 0));
     }
 }

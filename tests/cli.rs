@@ -96,7 +96,8 @@ fn control_characters_are_stripped_in_tui_mode() {
     let input = std::env::temp_dir().join(format!("subview-esc-{}.txt", std::process::id()));
     std::fs::write(&input, b"a\x1b[31mb\n").expect("写临时输入文件失败");
 
-    let command = format!("{} < {}", binary.display(), input.display());
+    // 显式 --tui：不能依赖「没有图形环境」来间接走终端界面。
+    let command = format!("{} --tui < {}", binary.display(), input.display());
     let output = std::process::Command::new("script")
         .arg("-qec")
         .arg(command)

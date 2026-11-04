@@ -40,7 +40,7 @@ impl From<AlignArg> for Align {
 /// 悬浮窗位置。
 ///
 /// 取值是中性的 `start` / `end`，实际方位随布局：横版沿垂直轴
-/// （start = 贴底、end = 贴顶），竖版沿水平轴（start = 贴左、end = 贴右）。
+/// （start = 贴底、end = 贴顶），竖版沿水平轴（start = 贴右、end = 贴左）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum PositionArg {
     Start,
@@ -92,6 +92,10 @@ pub struct Cli {
     #[arg(long)]
     pub no_color: bool,
 
+    /// 悬浮窗背景条不透明度（0–255，0 = 完全透明；仅悬浮窗）
+    #[arg(long, default_value_t = 30, value_name = "N")]
+    pub background_alpha: u8,
+
     /// 纯 ANSI 过滤器模式：不接管屏幕，原地更新
     #[arg(long, conflicts_with = "tui")]
     pub raw: bool,
@@ -100,7 +104,7 @@ pub struct Cli {
     #[arg(long)]
     pub tui: bool,
 
-    /// 悬浮窗位置：横版 start 贴底 / end 贴顶，竖版 start 贴左 / end 贴右
+    /// 悬浮窗位置：横版 start 贴底 / end 贴顶，竖版 start 贴右 / end 贴左
     #[arg(long, value_enum, default_value_t = PositionArg::Start, value_name = "POS")]
     pub position: PositionArg,
 
@@ -144,6 +148,19 @@ mod tests {
         assert_eq!(cli.size, None);
         assert_eq!(cli.position, PositionArg::Start);
         assert!(!cli.raw && !cli.tui);
+    }
+
+    #[test]
+    fn parses_background_alpha() {
+        let cli = Cli::try_parse_from(["subview"]).expect("默认参数应能解析");
+        assert_eq!(cli.background_alpha, 30);
+
+        for value in ["0", "255"] {
+            let cli = Cli::try_parse_from(["subview", "--background-alpha", value])
+                .expect("不透明度应能解析");
+            assert_eq!(cli.background_alpha, value.parse::<u8>().unwrap());
+        }
+        assert!(Cli::try_parse_from(["subview", "--background-alpha", "256"]).is_err());
     }
 
     #[test]

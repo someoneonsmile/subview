@@ -61,6 +61,10 @@ arecord \-q \-f S16_LE \-r 16000 \-c 1 | whisper\-stream \-m model.bin | subview
 .B NO_COLOR
 环境变量。
 .TP
+.BI \-\-background\-alpha " N"
+悬浮窗背景条不透明度：0（完全透明）到 255（不透明），默认 30。
+只对悬浮窗生效，透明与否取决于合成器。
+.TP
 .B \-\-raw
 纯 ANSI 过滤器模式：不接管屏幕，在原地更新字幕区域。
 当标准输出不是终端时自动降级为纯文本（每个定稿一行）。
@@ -71,7 +75,7 @@ arecord \-q \-f S16_LE \-r 16000 \-c 1 | whisper\-stream \-m model.bin | subview
 .BI \-\-position " start|end"
 悬浮窗位置，默认
 .BR start 。
-横版下 start 贴底、end 贴顶；竖版下 start 贴左、end 贴右（垂直居中）。
+横版下 start 贴底、end 贴顶；竖版下 start 贴右、end 贴左（垂直居中）。
 .TP
 .B \-\-vertical
 竖版悬浮窗：字从上到下、列从右到左（仅桌面悬浮窗）。

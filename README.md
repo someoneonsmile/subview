@@ -47,15 +47,45 @@
 
 ## 安装
 
+### 预编译二进制
+
+从 [GitHub Releases](https://github.com/someoneonsmile/subview/releases) 下载最新稳定版：
+
+| 平台 | 资产 |
+|---|---|
+| Linux x86_64 (glibc) | `subview-x86_64-linux-gnu.tar.gz` |
+| Linux x86_64 (musl，静态) | `subview-x86_64-linux-musl.tar.gz` |
+| Linux ARM64 | `subview-aarch64-linux-gnu.tar.gz` |
+
+每个压缩包内含二进制、bash/zsh/fish 补全、man 手册页与 README/LICENSE。解包后把
+`subview` 放进 `PATH`，补全与 man 页按包内路径安装即可。
+
+### AUR（Arch Linux）
+
 ```bash
-git clone <仓库地址> subview && cd subview
-cargo build --release
-install -m755 target/release/subview ~/.local/bin/
+# 稳定版
+yay -S subview-bin
+# 或
+paru -S subview-bin
+
+# 每夜构建（最新 commit）
+yay -S subview-nightly-bin
 ```
 
-或者：
+### 从源码构建
 
 ```bash
+git clone https://github.com/someoneonsmile/subview && cd subview
+just release      # 生成二进制 + shell 补全
+just install      # 安装到 /usr/local（二进制 + 补全 + man）
+```
+
+不需要 just 时，直接用 cargo：
+
+```bash
+cargo build --release
+install -m755 target/release/subview ~/.local/bin/
+# 或
 cargo install --path .
 ```
 
@@ -205,7 +235,21 @@ subview [OPTIONS]
 
 `subview | head` 这类下游提前关闭的场景按 Unix 惯例安静退出（SIGPIPE）。
 
-## 构建与测试
+## 开发
+
+日常命令由 [just](https://github.com/casey/just) 管理（`just --list` 查看全部）：
+
+```bash
+just check                          # 快速类型检查
+just build                          # debug 构建（同时生成 shell 补全到 shell_help/）
+just release                        # release 构建
+just test                           # 测试（默认特性，部分需要 util-linux 的 script）
+just test-terminal                  # 测试（纯终端特性）
+just fmt-check && just lint-strict  # 格式检查 + 严格 clippy
+just ci                             # fmt → clippy → test → release 全量检查
+```
+
+不用 just 时等价的 cargo 命令：
 
 ```bash
 cargo build --release                          # 默认：含悬浮窗
@@ -215,6 +259,9 @@ cargo clippy --all-targets -- -D warnings
 cargo clippy --all-targets --no-default-features -- -D warnings
 cargo fmt --check
 ```
+
+shell 补全由 `build.rs` 在设置 `SHELL_HELP_DIR` 时生成到 `shell_help/complete/`
+（普通 `cargo build` 不会生成）；`man/subview.1` 是手写维护的权威版本。
 
 ## 设计文档
 
@@ -234,3 +281,7 @@ cargo fmt --check
 - 竖排是逐字排版（cosmic-text 不支持竖排）：标点只对逗号/顿号/句号做了竖排位置调整，
   拉丁字母保持直立，单个字形超过 32×32 字框的部分会被裁切
 - `--raw` 的原地重绘依赖光标控制；若终端里同时有大量其他输出，可能出现错位
+
+## 许可证
+
+MIT，见 [LICENSE](LICENSE)。

@@ -3,6 +3,7 @@
 //! 设计见 `DESIGN.md`，协议见 `docs/protocol.md`。
 
 mod cli;
+mod cli_types;
 mod protocol;
 mod reader;
 mod render;

@@ -5,13 +5,14 @@
 
 use unicode_segmentation::UnicodeSegmentation;
 
-/// 竖排的一列，按从上到下的顺序保存 grapheme。
-pub type Column = Vec<String>;
+/// 带「是否未定稿」标记的竖排列。
+pub type TaggedColumn = Vec<(String, bool)>;
 
 /// 把文本流切成竖排列。
 ///
 /// - `capacity`：每列最多容纳的 grapheme 数（由窗口高度决定）
 /// - `max_columns`：最多保留的列数（由窗口宽度决定）
+/// - `partial_start`：整串文本中未定稿部分的字节起点；`None` 表示全部为定稿
 ///
 /// 列从文本开头开始切分（首列从顶部向下填满），因此新内容只会填满当前的
 /// 最后一列、再开新列，已有列的内容不会重排；只会把过旧的列挤出窗口。
@@ -20,28 +21,39 @@ pub type Column = Vec<String>;
 /// 越靠后越旧（越靠右）。
 ///
 /// 按 grapheme 边界切分，保证 CJK、emoji、组合字符不会被切开。
-pub fn split_columns(text: &str, capacity: usize, max_columns: usize) -> Vec<Column> {
+pub fn split_columns_tagged(
+    text: &str,
+    capacity: usize,
+    max_columns: usize,
+    partial_start: Option<usize>,
+) -> Vec<TaggedColumn> {
     if capacity == 0 || max_columns == 0 {
         return Vec::new();
     }
 
     // 换行在竖排里对应“另起一列”：每条字幕都从新列的顶部开始。
-    let mut columns: Vec<Column> = Vec::new();
-    for segment in text.split(['\n', '\r']) {
-        let graphemes: Vec<&str> = segment.graphemes(true).collect();
-        for chunk in graphemes.chunks(capacity) {
-            columns.push(
-                chunk
-                    .iter()
-                    .map(|grapheme| (*grapheme).to_string())
-                    .collect(),
-            );
+    let mut columns: Vec<TaggedColumn> = Vec::new();
+    let mut current: TaggedColumn = Vec::new();
+    for (offset, grapheme) in text.grapheme_indices(true) {
+        if grapheme == "\n" || grapheme == "\r" {
+            if !current.is_empty() {
+                columns.push(std::mem::take(&mut current));
+            }
+            continue;
         }
+        let partial = partial_start.is_some_and(|start| offset >= start);
+        current.push((grapheme.to_string(), partial));
+        if current.len() == capacity {
+            columns.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        columns.push(current);
     }
 
     // 只保留最新的 max_columns 列；显示时最新的列在最左。
     let skip = columns.len().saturating_sub(max_columns);
-    let mut columns: Vec<Column> = columns.into_iter().skip(skip).collect();
+    let mut columns: Vec<TaggedColumn> = columns.into_iter().skip(skip).collect();
     columns.reverse();
     columns
 }
@@ -63,7 +75,10 @@ mod tests {
     use super::*;
 
     fn columns(text: &str, capacity: usize, max_columns: usize) -> Vec<Vec<String>> {
-        split_columns(text, capacity, max_columns)
+        split_columns_tagged(text, capacity, max_columns, None)
+            .into_iter()
+            .map(|column| column.into_iter().map(|(grapheme, _)| grapheme).collect())
+            .collect()
     }
 
     #[test]
@@ -147,6 +162,45 @@ mod tests {
         assert_eq!(
             columns("abcd\nef", 3, 10),
             vec![vec!["e", "f"], vec!["d"], vec!["a", "b", "c"]]
+        );
+    }
+
+    #[test]
+    fn tagged_columns_mark_partial_graphemes() {
+        // “你好”是定稿，“世界”是未定稿：标记应落在后两个字上。
+        let tagged = split_columns_tagged("你好世界", 2, 2, Some("你好".len()));
+        assert_eq!(
+            tagged,
+            vec![
+                vec![("世".to_string(), true), ("界".to_string(), true)],
+                vec![("你".to_string(), false), ("好".to_string(), false)],
+            ]
+        );
+    }
+
+    #[test]
+    fn tagged_columns_without_partial_are_all_final() {
+        let tagged = split_columns_tagged("你好\n世界", 3, 2, None);
+        assert_eq!(
+            tagged,
+            vec![
+                vec![("世".to_string(), false), ("界".to_string(), false)],
+                vec![("你".to_string(), false), ("好".to_string(), false)],
+            ]
+        );
+    }
+
+    #[test]
+    fn tagged_columns_keep_newline_offset_correct() {
+        // 换行后的第一个字偏移应为 4（“一”占 3 字节 + 换行 1 字节），按字节比较。
+        let text = "一\n二";
+        let tagged = split_columns_tagged(text, 3, 2, Some("一\n".len()));
+        assert_eq!(
+            tagged,
+            vec![
+                vec![("二".to_string(), true)],
+                vec![("一".to_string(), false)]
+            ]
         );
     }
 

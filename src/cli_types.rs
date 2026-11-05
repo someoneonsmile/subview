@@ -68,7 +68,7 @@ pub struct Cli {
     #[arg(long, default_value_t = 0.0, value_name = "SEC", value_parser = parse_linger)]
     pub linger: f64,
 
-    /// 关闭颜色与文字属性
+    /// 关闭终端的颜色与文字属性
     #[arg(long)]
     pub no_color: bool,
 

@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use cosmic_text::{Attrs, Buffer, Color, FontSystem, Metrics, Shaping, SwashCache};
+use cosmic_text::{Attrs, Buffer, Color, FontSystem, Metrics, Shaping, SwashCache, Weight};
 use x11rb::connection::Connection;
 use x11rb::protocol::Event;
 use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
@@ -49,6 +49,8 @@ const SCREEN_MARGIN: i32 = 60;
 const CORNER_RADIUS: i32 = 10;
 /// 已定稿字幕颜色。
 const FINAL_COLOR: Color = Color::rgb(255, 255, 255);
+/// 未定稿字幕颜色：半透明白（约 43%），配合细字重和已定稿的纯白字区分开。
+const PARTIAL_COLOR: Color = Color::rgba(255, 255, 255, 110);
 /// 阴影水平偏移（像素）。
 const SHADOW_OFFSET_X: i32 = 0;
 /// 阴影垂直偏移（像素）。
@@ -426,8 +428,8 @@ impl WindowContext {
     }
 
     fn draw_captions(&mut self, frame: &mut [u32], state: &CaptionState, options: &RenderOptions) {
-        let text = compose_stream(state);
-        if text.is_empty() {
+        let stream = compose_stream(state);
+        if stream.text.is_empty() {
             return;
         }
 
@@ -436,13 +438,15 @@ impl WindowContext {
                 frame,
                 self.width,
                 self.height,
-                &text,
+                &stream,
                 options,
                 &mut self.font_system,
                 &mut self.swash_cache,
             );
             return;
         }
+        let text = stream.text.as_str();
+        let partial_start = stream.partial_start;
 
         let width = i32::from(self.width);
         let height = i32::from(self.height);
@@ -464,7 +468,20 @@ impl WindowContext {
         let mut buffer = Buffer::new(&mut self.font_system, Metrics::new(FONT_SIZE, LINE_HEIGHT));
         // 高度不设限：先排完全部行，再整体上移，只显示最后 capacity 行。
         buffer.set_size(Some(content_width), None);
-        buffer.set_text(&text, &Attrs::new(), Shaping::Advanced, alignment);
+        // 已定稿白字、未定稿浅灰：分段设置颜色，排版仍按整段文本流折行。
+        let final_attrs = Attrs::new().color(FINAL_COLOR);
+        let partial_attrs = Attrs::new().color(PARTIAL_COLOR).weight(Weight::LIGHT);
+        let mut spans: Vec<(&str, Attrs)> = Vec::new();
+        match partial_start {
+            Some(split) if split < text.len() => {
+                if split > 0 {
+                    spans.push((&text[..split], final_attrs.clone()));
+                }
+                spans.push((&text[split..], partial_attrs));
+            }
+            _ => spans.push((text, final_attrs)),
+        }
+        buffer.set_rich_text(spans, &Attrs::new(), Shaping::Advanced, alignment);
         buffer.shape_until_scroll(&mut self.font_system, false);
 
         // 内容按文本流折行（字幕间已换行）；超出窗口时从顶部上移，让最新行留在窗口内
@@ -560,7 +577,7 @@ fn draw_vertical_captions(
     frame: &mut [u32],
     width: u16,
     height: u16,
-    text: &str,
+    stream: &ComposedStream,
     options: &RenderOptions,
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
@@ -579,7 +596,8 @@ fn draw_vertical_captions(
     let content_height = (height as f32 - 2.0 * PADDING_Y).max(1.0);
     let capacity = ((content_height / cell) as usize).max(1);
     let max_columns = ((content_width / cell) as usize).max(1);
-    let columns = vertical::split_columns(text, capacity, max_columns);
+    let columns =
+        vertical::split_columns_tagged(&stream.text, capacity, max_columns, stream.partial_start);
     if columns.is_empty() {
         return;
     }
@@ -592,22 +610,30 @@ fn draw_vertical_captions(
     let block_x = vertical_block_start_x(width, columns.len(), cell);
     for (column_index, column) in columns.iter().enumerate() {
         let cell_x = block_x + column_index as f32 * cell;
-        for (row_index, grapheme) in column.iter().enumerate() {
+        for (row_index, (grapheme, partial)) in column.iter().enumerate() {
+            let partial = *partial;
             let cell_y = PADDING_Y + row_index as f32 * cell;
             // 中文竖排惯例：逗号、顿号、句号挪到字框右上角。
             let (shift_x, shift_y) = vertical::punctuation_shift(grapheme)
                 .map_or((0.0, 0.0), |(x, y)| (x * cell, y * cell));
+            // 未定稿的字用细字重 + 半透明白；alpha 差异来自 glyph 颜色，融入覆盖率遮罩。
+            let attrs = if partial {
+                Attrs::new().weight(Weight::LIGHT)
+            } else {
+                Attrs::new()
+            };
             buffer.set_text(
                 grapheme,
-                &Attrs::new(),
+                &attrs,
                 Shaping::Advanced,
                 Some(cosmic_text::Align::Center),
             );
             buffer.shape_until_scroll(font_system, false);
+            let glyph_color = if partial { PARTIAL_COLOR } else { FINAL_COLOR };
             buffer.draw(
                 font_system,
                 swash_cache,
-                FINAL_COLOR,
+                glyph_color,
                 |x, y, _, _, color| {
                     let alpha = scaled_alpha(color, fade_factor);
                     if alpha == 0 {
@@ -657,18 +683,19 @@ fn draw_vertical_captions(
         SHADOW_ALPHA,
     );
 
-    // 清晰描边：与横版一致，给竖排白字也加一圈硬边。
+    // 清晰描边：与横版一致，给竖排字也加一圈硬边。
     let outline = outline_mask(&coverage, width as usize, height as usize, OUTLINE_RADIUS);
     blend_mask(frame, &outline, width, height, 0, 0, OUTLINE_ALPHA);
 
-    // 字形本体：覆盖率遮罩（已含淡出系数）直接按 white 混合，与横版第二遍绘制等价。
+    // 字形本体：覆盖率遮罩已含淡出系数与未定稿的 alpha（定稿 100%、未定稿 70%）。
     for y in 0..height {
         for x in 0..width {
-            let alpha = coverage[(y * width + x) as usize];
+            let index = (y * width + x) as usize;
+            let alpha = coverage[index];
             if alpha == 0 {
                 continue;
             }
-            blend_pixel(frame, (y * width + x) as usize, 255, 255, 255, alpha);
+            blend_pixel(frame, index, 255, 255, 255, alpha);
         }
     }
 }
@@ -796,26 +823,52 @@ fn blend_mask(
     }
 }
 
+/// 组合后的文本流：整串文本 + 未定稿段起点。
+struct ComposedStream {
+    text: String,
+    /// 未定稿段在 `text` 中的字节起点；`None` 表示没有 partial。
+    partial_start: Option<usize>,
+}
+
 /// 把最近的字幕拼成一条连续文本流（每条字幕独立成行）。
 ///
 /// 只保留尾部一段，既够折行显示最新几行，也避免长文本的排版开销。
-fn compose_stream(state: &CaptionState) -> String {
+fn compose_stream(state: &CaptionState) -> ComposedStream {
     const MAX_CHARS: usize = 400;
 
     let mut text = String::new();
     for caption in state.history() {
         push_caption(&mut text, caption);
     }
+    let mut partial_start = None;
     if let Some(caption) = state.partial() {
+        // 已有内容时，未定稿段前会先补一个换行。
+        partial_start = Some(text.len() + usize::from(!text.is_empty()));
         push_caption(&mut text, caption);
     }
     if text.chars().count() > MAX_CHARS {
         let skip = text.chars().count() - MAX_CHARS;
+        let skip_bytes = text
+            .char_indices()
+            .nth(skip)
+            .map_or(text.len(), |(index, _)| index);
         text = text.chars().skip(skip).collect();
         // 尾段截断点可能落在换行上：去掉开头空行，避免多占一行高度。
-        text = text.trim_start_matches(['\n', '\r']).to_string();
+        let trimmed = text.trim_start_matches(['\n', '\r']);
+        let trim_bytes = text.len() - trimmed.len();
+        text = trimmed.to_string();
+        // 未定稿段起点随头部一起前移；被整个截掉时从头开始。
+        let consumed = skip_bytes + trim_bytes;
+        partial_start = partial_start.map(|start| start.saturating_sub(consumed));
     }
-    text
+    // partial 没有可着色的内容（空串 / 被整体截掉）时视为没有未定稿段。
+    if partial_start == Some(text.len()) {
+        partial_start = None;
+    }
+    ComposedStream {
+        text,
+        partial_start,
+    }
 }
 
 /// 追加一条字幕；不同字幕之间用换行分隔，各占独立行。
@@ -1060,7 +1113,39 @@ mod tests {
             text: "三".to_string(),
             speaker: None,
         }));
-        assert_eq!(compose_stream(&state), "一\n二\n三");
+        let stream = compose_stream(&state);
+        assert_eq!(stream.text, "一\n二\n三");
+        assert_eq!(stream.partial_start, Some("一\n二\n".len()));
+    }
+
+    #[test]
+    fn compose_stream_without_partial_has_no_split() {
+        let mut state = CaptionState::new(crate::state::HISTORY_CAP);
+        state.apply(crate::protocol::Event::Final(Caption {
+            text: "一".to_string(),
+            speaker: None,
+        }));
+        let stream = compose_stream(&state);
+        assert_eq!(stream.text, "一");
+        assert_eq!(stream.partial_start, None);
+    }
+
+    #[test]
+    fn compose_stream_keeps_partial_start_after_truncation() {
+        let mut state = CaptionState::new(crate::state::HISTORY_CAP);
+        let long = "b".repeat(399);
+        state.apply(crate::protocol::Event::Final(Caption {
+            text: long.clone(),
+            speaker: None,
+        }));
+        state.apply(crate::protocol::Event::Partial(Caption {
+            text: "三".to_string(),
+            speaker: None,
+        }));
+        // 总长 401 字符：截掉 1 个字符后剩 398 个 b + 换行 + 未定稿的“三”。
+        let stream = compose_stream(&state);
+        assert_eq!(stream.text, format!("{}\n三", "b".repeat(398)));
+        assert_eq!(stream.partial_start, Some(399));
     }
 
     #[test]
@@ -1076,6 +1161,8 @@ mod tests {
             speaker: None,
         }));
         // 总长 401 字符，截掉第 1 个字符后恰好以换行开头，应去掉这个空行。
-        assert_eq!(compose_stream(&state), long);
+        let stream = compose_stream(&state);
+        assert_eq!(stream.text, long);
+        assert_eq!(stream.partial_start, None);
     }
 }

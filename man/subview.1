@@ -14,6 +14,7 @@ arecord \-q \-f S16_LE \-r 16000 \-c 1 | whisper\-stream \-m model.bin | subview
 .RE
 .PP
 默认显示为桌面悬浮窗：透明背景、点击穿透、置顶、无边框。
+已定稿字幕为白色，未定稿（partial）字幕为更淡的半透明白色（约 43%）并使用细字重。
 透明背景需要正在运行的 X11 合成器（picom、mutter、kwin、xfwm4 等）；
 没有合成器时背景显示为黑色。
 .PP
@@ -57,9 +58,9 @@ arecord \-q \-f S16_LE \-r 16000 \-c 1 | whisper\-stream \-m model.bin | subview
 最后一条字幕驻留多少秒后淡出，默认 0（常驻）。
 .TP
 .B \-\-no\-color
-关闭颜色与文字属性。同时遵守
+关闭终端的颜色与文字属性。同时遵守
 .B NO_COLOR
-环境变量。
+环境变量。悬浮窗的定稿/未定稿配色不受影响。
 .TP
 .BI \-\-background\-alpha " N"
 悬浮窗背景条不透明度：0（完全透明）到 255（不透明），默认 30。
@@ -135,7 +136,9 @@ arecord \-q \-f S16_LE \-r 16000 \-c 1 | whisper\-stream \-m model.bin | subview
 .SH 环境变量
 .TP
 .B NO_COLOR
-存在即关闭颜色。
+存在即关闭颜色（同
+.BR \-\-no\-color ，
+只影响终端后端）。
 .TP
 .B TERM
 为

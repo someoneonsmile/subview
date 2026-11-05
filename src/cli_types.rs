@@ -43,7 +43,7 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t = FormatArg::Plain, value_name = "FORMAT")]
     pub format: FormatArg,
 
-    /// 保留最近几条字幕
+    /// 显示的字幕行数（终端模式取 min(终端高度, N)）
     #[arg(
         long,
         default_value_t = 2,

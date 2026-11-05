@@ -45,6 +45,8 @@ pub fn spawn_reader<F>(
                 Ok(read) => {
                     events.clear();
                     parser.feed(&buffer[..read], &mut events);
+                    // 未以 `\r` / `\n` 结束的行内容也实时显示，避免等分隔符。
+                    parser.flush_pending(&mut events);
                     apply(&state, &events);
                     notify(ReaderEvent::Updated);
                 }

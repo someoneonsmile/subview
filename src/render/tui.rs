@@ -16,6 +16,8 @@ pub struct TuiRenderer<W: Write> {
     align: Align,
     width_limit: Option<usize>,
     color: bool,
+    /// 最多显示的字幕行数。
+    max_lines: usize,
     prev_start: usize,
     prev_height: usize,
     prev_rows: u16,
@@ -23,12 +25,19 @@ pub struct TuiRenderer<W: Write> {
 }
 
 impl<W: Write> TuiRenderer<W> {
-    pub fn new(out: W, align: Align, width_limit: Option<usize>, color: bool) -> Self {
+    pub fn new(
+        out: W,
+        align: Align,
+        width_limit: Option<usize>,
+        color: bool,
+        max_lines: usize,
+    ) -> Self {
         Self {
             out,
             align,
             width_limit,
             color,
+            max_lines: max_lines.max(1),
             prev_start: 0,
             prev_height: 0,
             prev_rows: 0,
@@ -88,11 +97,12 @@ impl<W: Write> Backend for TuiRenderer<W> {
         let cols = cols.max(1) as usize;
         let rows = rows.max(1) as usize;
         let width = self.width_limit.unwrap_or(cols).min(cols).max(1);
+        let max_lines = rows.min(self.max_lines).max(1);
         let lines = layout(
             state,
             &LayoutOptions {
                 width,
-                max_lines: rows,
+                max_lines,
                 align: self.align,
                 fade,
             },

@@ -16,17 +16,26 @@ pub struct RawRenderer<W: Write> {
     align: Align,
     width_limit: Option<usize>,
     color: bool,
+    /// 最多显示的字幕行数。
+    max_lines: usize,
     /// 当前光标所在行距区域顶部的距离（0 表示没有区域）。
     last_height: usize,
 }
 
 impl<W: Write> RawRenderer<W> {
-    pub fn new(out: W, align: Align, width_limit: Option<usize>, color: bool) -> Self {
+    pub fn new(
+        out: W,
+        align: Align,
+        width_limit: Option<usize>,
+        color: bool,
+        max_lines: usize,
+    ) -> Self {
         Self {
             out,
             align,
             width_limit,
             color,
+            max_lines: max_lines.max(1),
             last_height: 0,
         }
     }
@@ -78,7 +87,7 @@ impl<W: Write> Backend for RawRenderer<W> {
             state,
             &LayoutOptions {
                 width,
-                max_lines: rows,
+                max_lines: rows.min(self.max_lines).max(1),
                 align: self.align,
                 fade,
             },

@@ -6,6 +6,7 @@
 //!
 //! - `\n`：提交（final），此前累积的内容成为一条定稿字幕
 //! - `\r`：覆盖（partial），此前累积的内容作为中间结果展示、可被丢弃
+//! - 尚未由 `\r` / `\n` 结束的行内容也会作为 partial 实时显示
 //! - 空行：清屏
 //! - `\r\n`（CRLF）：视为一次行结束
 //!
@@ -83,6 +84,17 @@ impl Parser {
         match self {
             Self::Plain(parser) => parser.finish(out),
             Self::Jsonl(parser) => parser.finish(out),
+        }
+    }
+
+    /// 把还没被 `\r` / `\n` 结束的行内容作为 partial 发出。
+    ///
+    /// 让逐字节 / 逐块写入的输入也能实时上屏；jsonl 以换行分帧，没有
+    /// “未结束行”的语义，不产生事件。
+    pub fn flush_pending(&mut self, out: &mut Vec<Event>) {
+        match self {
+            Self::Plain(parser) => parser.flush_pending(out),
+            Self::Jsonl(_) => {}
         }
     }
 }
@@ -179,6 +191,30 @@ impl PlainParser {
         } else if let Some(caption) = self.last_partial.take() {
             out.push(Event::Final(caption));
         }
+    }
+
+    /// 把尚未结束的行内容作为 partial 发出（实时预览）。
+    pub fn flush_pending(&mut self, out: &mut Vec<Event>) {
+        if let Some(caption) = self.pending_caption() {
+            out.push(Event::Partial(caption));
+        }
+    }
+
+    /// 缓冲区中尚未结束的内容；只解码完整的 UTF-8 前缀。
+    fn pending_caption(&self) -> Option<Caption> {
+        // 跨 `read` 的半个字符先不显示，避免闪一下 U+FFFD。
+        let bytes = match std::str::from_utf8(&self.buf) {
+            Ok(_) => self.buf.as_slice(),
+            Err(error) => &self.buf[..error.valid_up_to()],
+        };
+        let text = decode_text(bytes, self.strip_control);
+        if text.trim().is_empty() {
+            return None;
+        }
+        Some(Caption {
+            text,
+            speaker: None,
+        })
     }
 }
 
@@ -459,6 +495,47 @@ mod tests {
             Event::Final(caption) => assert_eq!(caption.text.len(), TAIL_BYTES),
             other => panic!("unexpected event: {other:?}"),
         }
+    }
+
+    #[test]
+    fn plain_unterminated_content_is_flushed_as_partial() {
+        let mut parser = PlainParser::new(true);
+        let mut out = Vec::new();
+        parser.feed(b"4", &mut out);
+        assert!(out.is_empty(), "feed 本身不产生事件");
+        parser.flush_pending(&mut out);
+        assert_eq!(out, vec![Event::Partial(caption("4"))]);
+    }
+
+    #[test]
+    fn plain_pending_skips_incomplete_utf8() {
+        let bytes = "中".as_bytes();
+        let mut parser = PlainParser::new(true);
+        let mut out = Vec::new();
+        parser.feed(&bytes[..2], &mut out);
+        parser.flush_pending(&mut out);
+        assert!(out.is_empty(), "半个字符不应显示");
+        parser.feed(&bytes[2..], &mut out);
+        parser.flush_pending(&mut out);
+        assert_eq!(out, vec![Event::Partial(caption("中"))]);
+    }
+
+    #[test]
+    fn plain_pending_blank_line_is_ignored() {
+        let mut parser = PlainParser::new(true);
+        let mut out = Vec::new();
+        parser.feed(b"   ", &mut out);
+        parser.flush_pending(&mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn jsonl_has_no_pending_partial() {
+        let mut parser = Parser::new(InputFormat::Jsonl, true);
+        let mut out = Vec::new();
+        parser.feed(r#"{"event":"partial","text":"欢迎""#.as_bytes(), &mut out);
+        parser.flush_pending(&mut out);
+        assert!(out.is_empty());
     }
 
     fn parse_jsonl(input: &str) -> Vec<Event> {

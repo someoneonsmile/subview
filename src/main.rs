@@ -150,7 +150,7 @@ fn stream_loop(
     strip_control: bool,
     mode: StreamMode,
 ) -> io::Result<()> {
-    let state = Arc::new(Mutex::new(CaptionState::new(cli.lines as usize)));
+    let state = Arc::new(Mutex::new(CaptionState::new(state::HISTORY_CAP)));
     let dirty = Arc::new(AtomicBool::new(false));
     let eof = Arc::new(AtomicBool::new(false));
     let dirty_reader = dirty.clone();
@@ -169,14 +169,16 @@ fn stream_loop(
 
     match mode {
         StreamMode::Tui => {
-            let mut renderer = TuiRenderer::new(stdout.lock(), align, width_limit, color);
+            let mut renderer =
+                TuiRenderer::new(stdout.lock(), align, width_limit, color, cli.lines as usize);
             renderer.enter()?;
             let result = drive(&mut renderer, &state, &dirty, &eof, cli.linger);
             renderer.exit()?;
             result
         }
         StreamMode::RawTty => {
-            let mut renderer = RawRenderer::new(stdout.lock(), align, width_limit, color);
+            let mut renderer =
+                RawRenderer::new(stdout.lock(), align, width_limit, color, cli.lines as usize);
             let result = drive(&mut renderer, &state, &dirty, &eof, cli.linger);
             renderer.finish()?;
             result

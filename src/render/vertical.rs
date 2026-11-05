@@ -15,6 +15,7 @@ pub type Column = Vec<String>;
 ///
 /// 列从文本开头开始切分（首列从顶部向下填满），因此新内容只会填满当前的
 /// 最后一列、再开新列，已有列的内容不会重排；只会把过旧的列挤出窗口。
+/// 文本里的换行表示另起一列：换行后的内容从新列的顶部开始，不与上一列续接。
 /// 返回顺序即显示顺序：索引 0 是最新（窗口最左、可能未填满）一列，
 /// 越靠后越旧（越靠右）。
 ///
@@ -24,20 +25,23 @@ pub fn split_columns(text: &str, capacity: usize, max_columns: usize) -> Vec<Col
         return Vec::new();
     }
 
-    let graphemes: Vec<&str> = text.graphemes(true).collect();
-    let chunk_count = graphemes.len().div_ceil(capacity);
-    let skip = chunk_count.saturating_sub(max_columns);
-    let mut columns: Vec<Column> = graphemes
-        .chunks(capacity)
-        .skip(skip)
-        .map(|chunk| {
-            chunk
-                .iter()
-                .map(|grapheme| (*grapheme).to_string())
-                .collect()
-        })
-        .collect();
-    // 显示时最新的列在最左，所以把文本顺序翻转过来。
+    // 换行在竖排里对应“另起一列”：每条字幕都从新列的顶部开始。
+    let mut columns: Vec<Column> = Vec::new();
+    for segment in text.split(['\n', '\r']) {
+        let graphemes: Vec<&str> = segment.graphemes(true).collect();
+        for chunk in graphemes.chunks(capacity) {
+            columns.push(
+                chunk
+                    .iter()
+                    .map(|grapheme| (*grapheme).to_string())
+                    .collect(),
+            );
+        }
+    }
+
+    // 只保留最新的 max_columns 列；显示时最新的列在最左。
+    let skip = columns.len().saturating_sub(max_columns);
+    let mut columns: Vec<Column> = columns.into_iter().skip(skip).collect();
     columns.reverse();
     columns
 }
@@ -126,6 +130,24 @@ mod tests {
         let after = columns("abcdefg", 3, 2);
         assert_eq!(before, vec![vec!["d", "e", "f"], vec!["a", "b", "c"]]);
         assert_eq!(after[1], before[0]);
+    }
+
+    #[test]
+    fn newline_starts_a_new_column() {
+        // 换行在竖排里表示另起一列，每条字幕从新列顶部开始。
+        assert_eq!(
+            columns("你好\n世界", 3, 2),
+            vec![vec!["世", "界"], vec!["你", "好"]]
+        );
+    }
+
+    #[test]
+    fn wrapped_column_then_newline_starts_another_column() {
+        // 一段超过 capacity 时先按容量跨列，换行后从新列继续。
+        assert_eq!(
+            columns("abcd\nef", 3, 10),
+            vec![vec!["e", "f"], vec!["d"], vec!["a", "b", "c"]]
+        );
     }
 
     #[test]

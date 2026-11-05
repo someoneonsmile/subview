@@ -4,6 +4,12 @@ use std::collections::VecDeque;
 
 use crate::protocol::{Caption, Event};
 
+/// 历史保留的条数硬上限。
+///
+/// 仅用于限制内存（避免长时间运行时无限增长）；实际显示哪几行由渲染层按
+/// 可见行数裁剪，与 `--lines` 无关。
+pub const HISTORY_CAP: usize = 256;
+
 /// 屏幕上要显示的字幕状态。
 ///
 /// 历史只保留最近 `max_history` 条，内存占用与运行时长无关。

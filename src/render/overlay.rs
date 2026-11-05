@@ -47,8 +47,6 @@ const PADDING_Y: f32 = 10.0;
 const SCREEN_MARGIN: i32 = 60;
 /// 字幕条圆角半径（像素）。
 const CORNER_RADIUS: i32 = 10;
-/// 默认窗口宽度按多少个全角字符估算。
-const DEFAULT_MAX_CHARS: f32 = 15.0;
 /// 已定稿字幕颜色。
 const FINAL_COLOR: Color = Color::rgb(255, 255, 255);
 /// 阴影水平偏移（像素）。
@@ -135,11 +133,10 @@ fn compute_geometry(cli: &Cli, screen_width: i32, screen_height: i32) -> Geometr
         (width, height)
     } else {
         let max_width = (screen_width - 80).max(320);
-        let default_width = (FONT_SIZE * 1.05 * DEFAULT_MAX_CHARS + 2.0 * PADDING_X).round() as i32;
         let width = match cli.size {
-            // 悬浮窗模式下 --size 表示窗口宽度（像素）；不传时按约 15 个全角字估算。
+            // 悬浮窗模式下 --size 表示窗口宽度（像素）；不传时默认占屏幕宽度的一半。
             Some(requested) => i32::from(requested).clamp(200, max_width),
-            None => default_width.min(max_width),
+            None => (screen_width / 2).clamp(200, max_width),
         };
         // 高度自动：`--lines` 行。
         let lines = i32::from(cli.lines);
@@ -301,7 +298,7 @@ impl WindowContext {
         format: InputFormat,
         strip_control: bool,
     ) -> Result<i32, String> {
-        let state = Arc::new(Mutex::new(CaptionState::new(cli.lines as usize)));
+        let state = Arc::new(Mutex::new(CaptionState::new(crate::state::HISTORY_CAP)));
         let dirty = Arc::new(AtomicBool::new(false));
         let eof = Arc::new(AtomicBool::new(false));
         let dirty_reader = dirty.clone();
@@ -470,7 +467,7 @@ impl WindowContext {
         buffer.set_text(&text, &Attrs::new(), Shaping::Advanced, alignment);
         buffer.shape_until_scroll(&mut self.font_system, false);
 
-        // 内容按连续文本流折行；超出窗口时从顶部上移，让最新行留在窗口内
+        // 内容按文本流折行（字幕间已换行）；超出窗口时从顶部上移，让最新行留在窗口内
         // （yt-live-sub 的“新内容从下方进入、旧行被顶上去”效果）。
         let rendered_lines = buffer.layout_runs().count() as f32;
         let total_height = rendered_lines * LINE_HEIGHT;
@@ -799,7 +796,7 @@ fn blend_mask(
     }
 }
 
-/// 把最近的字幕拼成一条连续文本流（类似 yt-live-sub 的显示模型）。
+/// 把最近的字幕拼成一条连续文本流（每条字幕独立成行）。
 ///
 /// 只保留尾部一段，既够折行显示最新几行，也避免长文本的排版开销。
 fn compose_stream(state: &CaptionState) -> String {
@@ -815,13 +812,16 @@ fn compose_stream(state: &CaptionState) -> String {
     if text.chars().count() > MAX_CHARS {
         let skip = text.chars().count() - MAX_CHARS;
         text = text.chars().skip(skip).collect();
+        // 尾段截断点可能落在换行上：去掉开头空行，避免多占一行高度。
+        text = text.trim_start_matches(['\n', '\r']).to_string();
     }
     text
 }
 
+/// 追加一条字幕；不同字幕之间用换行分隔，各占独立行。
 fn push_caption(text: &mut String, caption: &Caption) {
     if !text.is_empty() {
-        text.push(' ');
+        text.push('\n');
     }
     if let Some(speaker) = caption.speaker.as_deref().filter(|value| !value.is_empty()) {
         text.push_str(&format!("[{speaker}] "));
@@ -917,19 +917,19 @@ mod tests {
     }
 
     #[test]
-    fn horizontal_geometry_is_unchanged() {
-        // 1920x1080、默认 2 行：默认宽 410px、高 84px、水平居中、底部留 60px。
+    fn horizontal_default_width_is_half_screen() {
+        // 1920x1080、默认 2 行：宽 = 屏幕宽一半（960px）、高 84px、水平居中、底部留 60px。
         let g = geometry(&["subview"], 1920, 1080);
-        assert_eq!(g.width, 410);
+        assert_eq!(g.width, 960);
         assert_eq!(g.height, 84);
-        assert_eq!(g.x, 755);
+        assert_eq!(g.x, 480);
         assert_eq!(g.y, 936);
     }
 
     #[test]
     fn horizontal_end_position_is_top() {
         let g = geometry(&["subview", "--position", "end"], 1920, 1080);
-        assert_eq!(g.x, 755);
+        assert_eq!(g.x, 480);
         assert_eq!(g.y, 60);
     }
 
@@ -1045,5 +1045,37 @@ mod tests {
         let mut transparent = vec![0u32; width * height];
         draw_background(&mut transparent, width as i32, height as i32, 0, 0);
         assert!(transparent.iter().all(|&pixel| pixel == 0));
+    }
+
+    #[test]
+    fn compose_stream_puts_each_caption_on_its_own_line() {
+        let mut state = CaptionState::new(crate::state::HISTORY_CAP);
+        for text in ["一", "二"] {
+            state.apply(crate::protocol::Event::Final(Caption {
+                text: text.to_string(),
+                speaker: None,
+            }));
+        }
+        state.apply(crate::protocol::Event::Partial(Caption {
+            text: "三".to_string(),
+            speaker: None,
+        }));
+        assert_eq!(compose_stream(&state), "一\n二\n三");
+    }
+
+    #[test]
+    fn compose_stream_drops_blank_line_left_by_truncation() {
+        let mut state = CaptionState::new(crate::state::HISTORY_CAP);
+        state.apply(crate::protocol::Event::Final(Caption {
+            text: "x".to_string(),
+            speaker: None,
+        }));
+        let long = "b".repeat(399);
+        state.apply(crate::protocol::Event::Final(Caption {
+            text: long.clone(),
+            speaker: None,
+        }));
+        // 总长 401 字符，截掉第 1 个字符后恰好以换行开头，应去掉这个空行。
+        assert_eq!(compose_stream(&state), long);
     }
 }

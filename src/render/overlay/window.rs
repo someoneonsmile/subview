@@ -37,10 +37,10 @@ fn compute_geometry(config: &OverlayConfig, screen_width: i32, screen_height: i3
         let min_width = cell + 2 * pad_x;
         let max_width = (screen_width - 80).max(min_width);
         let width = (i32::from(config.lines) * cell + 2 * pad_x).min(max_width);
-        // 高度由 `--size` 指定，未指定时取屏幕高减上下边距。
+        // 高度由 `--size` 指定，未指定时默认占屏幕高度的一半。
         let min_height = cell + 2 * pad_y;
         let max_height = screen_height.max(min_height);
-        let default_height = (screen_height - 2 * SCREEN_MARGIN).max(min_height);
+        let default_height = (screen_height / 2).max(min_height);
         let height = match config.size {
             Some(requested) => i32::from(requested).clamp(min_height, max_height),
             None => default_height.min(max_height),
@@ -291,11 +291,11 @@ mod tests {
         let g = geometry(&["subview", "--vertical"], 1920, 1080);
         // 2 列 × 32px + 左右内边距 16px。
         assert_eq!(g.width, 96);
-        // 屏幕高减上下边距 60px。
-        assert_eq!(g.height, 960);
+        // 默认高度为屏幕高的一半。
+        assert_eq!(g.height, 540);
         // 默认 start：竖版贴右，垂直居中。
         assert_eq!(g.x, 1764);
-        assert_eq!(g.y, 60);
+        assert_eq!(g.y, 270);
     }
 
     #[test]

@@ -60,6 +60,11 @@ impl CaptionState {
     }
 }
 
+/// 说话人前缀文本，例如 `[A] `。
+pub fn speaker_prefix(speaker: &str) -> String {
+    format!("[{speaker}] ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

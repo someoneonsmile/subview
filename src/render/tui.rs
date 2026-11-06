@@ -2,9 +2,9 @@
 
 use std::io::{self, Write};
 
-use crate::render::Backend;
 use crate::render::ansi;
 use crate::render::layout::{Align, LayoutOptions, StyledLine, layout};
+use crate::render::{Fade, Renderer};
 use crate::state::CaptionState;
 
 /// 在终端里显示字幕的渲染器。
@@ -73,15 +73,11 @@ impl<W: Write> TuiRenderer<W> {
                     self.out,
                     "{}{}{}",
                     ansi::SPEAKER_COLOR,
-                    crate::render::layout::speaker_prefix(speaker),
+                    crate::state::speaker_prefix(speaker),
                     ansi::RESET_COLOR
                 )?;
             } else {
-                write!(
-                    self.out,
-                    "{}",
-                    crate::render::layout::speaker_prefix(speaker)
-                )?;
+                write!(self.out, "{}", crate::state::speaker_prefix(speaker))?;
             }
         }
         write!(self.out, "{}", line.text)?;
@@ -92,8 +88,9 @@ impl<W: Write> TuiRenderer<W> {
     }
 }
 
-impl<W: Write> Backend for TuiRenderer<W> {
-    fn draw(&mut self, state: &CaptionState, cols: u16, rows: u16, fade: u8) -> io::Result<()> {
+impl<W: Write> Renderer for TuiRenderer<W> {
+    fn draw(&mut self, state: &CaptionState, fade: Fade) -> io::Result<()> {
+        let (cols, rows) = crate::render::terminal_size();
         let cols = cols.max(1) as usize;
         let rows = rows.max(1) as usize;
         let width = self.width_limit.unwrap_or(cols).min(cols).max(1);
@@ -104,7 +101,7 @@ impl<W: Write> Backend for TuiRenderer<W> {
                 width,
                 max_lines,
                 align: self.align,
-                fade,
+                fade: fade.percent(),
             },
         );
         let height = lines.len();

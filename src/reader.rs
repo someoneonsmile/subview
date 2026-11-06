@@ -3,7 +3,8 @@
 use std::io::{self, Read};
 use std::sync::{Arc, Mutex};
 
-use crate::protocol::{Event, InputFormat, Parser};
+use crate::config::ReaderOptions;
+use crate::protocol::{Event, Parser, Warning};
 use crate::state::CaptionState;
 
 /// 读线程产生的事件。
@@ -18,19 +19,16 @@ pub enum ReaderEvent {
 /// 启动读线程。
 ///
 /// `notify` 在状态更新后调用，必须足够轻量（不能阻塞读线程）。
-pub fn spawn_reader<F>(
-    state: Arc<Mutex<CaptionState>>,
-    format: InputFormat,
-    strip_control: bool,
-    notify: F,
-) where
+pub fn spawn_reader<F>(state: Arc<Mutex<CaptionState>>, options: ReaderOptions, notify: F)
+where
     F: Fn(ReaderEvent) + Send + 'static,
 {
     std::thread::spawn(move || {
         let stdin = io::stdin();
         let mut reader = stdin.lock();
-        let mut parser = Parser::new(format, strip_control);
+        let mut parser = Parser::new(options.format, options.policy.strip_control);
         let mut events: Vec<Event> = Vec::new();
+        let mut warnings: Vec<Warning> = Vec::new();
         let mut buffer = [0u8; 8192];
 
         loop {
@@ -38,6 +36,7 @@ pub fn spawn_reader<F>(
                 Ok(0) => {
                     events.clear();
                     parser.finish(&mut events);
+                    report_warnings(&mut parser, &mut warnings);
                     apply(&state, &events);
                     notify(ReaderEvent::Finished);
                     break;
@@ -47,6 +46,7 @@ pub fn spawn_reader<F>(
                     parser.feed(&buffer[..read], &mut events);
                     // 未以 `\r` / `\n` 结束的行内容也实时显示，避免等分隔符。
                     parser.flush_pending(&mut events);
+                    report_warnings(&mut parser, &mut warnings);
                     apply(&state, &events);
                     notify(ReaderEvent::Updated);
                 }
@@ -58,6 +58,14 @@ pub fn spawn_reader<F>(
             }
         }
     });
+}
+
+/// 把解析器累积的警告输出到 stderr（读线程负责 I/O）。
+fn report_warnings(parser: &mut Parser, warnings: &mut Vec<Warning>) {
+    parser.drain_warnings(warnings);
+    for warning in warnings.drain(..) {
+        eprintln!("subview: warning: {warning}");
+    }
 }
 
 fn apply(state: &Mutex<CaptionState>, events: &[Event]) {

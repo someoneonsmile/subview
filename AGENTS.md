@@ -95,25 +95,38 @@ clone AUR 仓库、复制文件、commit、push（带重试）。
 
 ```
 src/
-├── main.rs       入口：参数解析、模式分发、主循环
+├── main.rs       入口：参数解析、退出码
+├── app.rs        运行模式解析（单一事实来源）+ 启动错误输出
 ├── cli.rs        CLI 的 crate 内入口（re-export + From 转换 + CLI 测试）
 ├── cli_types.rs  build.rs 可 include 的 CLI 定义（禁止 use crate::）
-├── protocol.rs   输入协议解析（plain / jsonl）
-├── reader.rs     stdin 读取与背压
+├── config.rs     渲染层 / 读线程的领域配置
+├── error.rs      启动错误与错误退出码
+├── protocol.rs   输入协议解析（plain / jsonl，无 I/O 副作用）
+├── reader.rs     stdin 读取与背压，负责输出解析警告
 ├── signal.rs     SIGINT / SIGTERM 处理与终端恢复
-├── state.rs      字幕状态（滚动窗口、partial 覆盖）
+├── state.rs      字幕状态（滚动窗口、partial 覆盖、speaker 前缀）
 ├── wrap.rs       CJK / emoji 友好的折行
+├── run/
+│   ├── mod.rs        通用主循环 drive + Linger 淡出状态机
+│   ├── terminal.rs   终端后端装配（--tui / --raw）
+│   └── filter.rs     非终端纯文本过滤器
 └── render/
-    ├── mod.rs      后端选择与公共类型
+    ├── mod.rs      Renderer trait、Fade、Poll、终端尺寸
     ├── layout.rs   排版、尺寸与对齐
-    ├── overlay.rs  X11 悬浮窗（feature overlay）
-    ├── vertical.rs 竖版悬浮窗（竖排逐字排版）
     ├── tui.rs      终端界面（备用屏幕）
     ├── ansi.rs     ANSI 工具
-    └── raw.rs      纯 ANSI 过滤器
+    ├── raw.rs      原地重绘（--raw 且输出到终端）
+    └── overlay/    X11 悬浮窗（feature overlay）
+        ├── mod.rs       生命周期、帧循环、横竖版调度
+        ├── window.rs    X11 资源与几何
+        ├── canvas.rs    像素层：背景 / 遮罩 / 混合 / 打包
+        ├── compose.rs   状态 → 连续文本流
+        ├── horizontal.rs 横版绘制
+        └── vertical.rs  竖排切列与绘制
 tests/cli.rs      通过真实二进制的集成测试（协议、退出码、I/O 行为）
 man/subview.1     手写 man 手册页
 docs/protocol.md  输入协议规范
+docs/refactor-plan.md  结构评审与重构记录
 DESIGN.md         架构、范围、Unix 契约与里程碑
 ```
 

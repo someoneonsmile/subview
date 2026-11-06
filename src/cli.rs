@@ -1,5 +1,8 @@
 //! 命令行接口。
 
+#[cfg(feature = "overlay")]
+use crate::config::{OverlayConfig, Position};
+use crate::config::{ReaderOptions, TextPolicy};
 use crate::protocol::InputFormat;
 use crate::render::layout::Align;
 
@@ -21,6 +24,47 @@ impl From<AlignArg> for Align {
         match value {
             AlignArg::Left => Align::Left,
             AlignArg::Center => Align::Center,
+        }
+    }
+}
+
+#[cfg(feature = "overlay")]
+impl From<PositionArg> for Position {
+    fn from(value: PositionArg) -> Self {
+        match value {
+            PositionArg::Start => Position::Start,
+            PositionArg::End => Position::End,
+        }
+    }
+}
+
+impl From<&Cli> for TextPolicy {
+    fn from(_: &Cli) -> Self {
+        Self::SANITIZED
+    }
+}
+
+impl From<&Cli> for ReaderOptions {
+    fn from(cli: &Cli) -> Self {
+        Self {
+            format: cli.format.into(),
+            policy: TextPolicy::from(cli),
+        }
+    }
+}
+
+#[cfg(feature = "overlay")]
+impl From<&Cli> for OverlayConfig {
+    fn from(cli: &Cli) -> Self {
+        Self {
+            lines: cli.lines,
+            size: cli.size,
+            align: cli.align.into(),
+            position: cli.position.into(),
+            vertical: cli.vertical,
+            background_alpha: cli.background_alpha,
+            linger: cli.linger,
+            debug: cli.debug,
         }
     }
 }

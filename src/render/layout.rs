@@ -71,7 +71,7 @@ pub fn layout(state: &CaptionState, options: &LayoutOptions) -> Vec<StyledLine> 
         for line in &mut out {
             let mut line_width = line.text.width();
             if let Some(speaker) = &line.speaker {
-                line_width += speaker_prefix(speaker).width();
+                line_width += crate::state::speaker_prefix(speaker).width();
             }
             let padding = width.saturating_sub(line_width) / 2;
             if padding > 0 {
@@ -81,11 +81,6 @@ pub fn layout(state: &CaptionState, options: &LayoutOptions) -> Vec<StyledLine> 
     }
 
     out
-}
-
-/// 说话人前缀文本，例如 `[A] `。
-pub fn speaker_prefix(speaker: &str) -> String {
-    format!("[{speaker}] ")
 }
 
 #[cfg(test)]

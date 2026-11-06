@@ -57,6 +57,39 @@ const TAIL_BYTES: usize = 32 * 1024;
 /// 告警限流间隔。
 const WARN_INTERVAL: Duration = Duration::from_secs(5);
 
+/// 解析过程中产生的警告。
+///
+/// 解析器只记录、不输出；由调用方（读线程 / 纯文本过滤器）决定写到哪、用什么格式。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Warning {
+    /// plain 行超过上限，只保留尾部。
+    LineTruncated { limit_kib: usize },
+    /// jsonl 行超过上限，已丢弃。
+    JsonLineTooLong { limit_kib: usize },
+    /// JSON 行无法解析。
+    JsonParseFailed,
+    /// partial / final 事件缺少 text 字段。
+    JsonMissingText { event: String },
+    /// 未知事件类型。
+    JsonUnknownEvent { event: String },
+}
+
+impl std::fmt::Display for Warning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LineTruncated { limit_kib } => {
+                write!(f, "输入行超过 {limit_kib} KiB，只保留尾部")
+            }
+            Self::JsonLineTooLong { limit_kib } => {
+                write!(f, "JSON 行超过 {limit_kib} KiB，已丢弃")
+            }
+            Self::JsonParseFailed => f.write_str("无法解析 JSON 行，已忽略"),
+            Self::JsonMissingText { event } => write!(f, "{event} 事件缺少 text 字段"),
+            Self::JsonUnknownEvent { event } => write!(f, "未知事件类型 {event:?}，已忽略"),
+        }
+    }
+}
+
 /// 流式协议解析器。
 pub enum Parser {
     Plain(PlainParser),
@@ -97,6 +130,14 @@ impl Parser {
             Self::Jsonl(_) => {}
         }
     }
+
+    /// 取走累积的警告，交给调用方输出。
+    pub fn drain_warnings(&mut self, out: &mut Vec<Warning>) {
+        match self {
+            Self::Plain(parser) => parser.drain_warnings(out),
+            Self::Jsonl(parser) => parser.drain_warnings(out),
+        }
+    }
 }
 
 // ---------------------------------------------------------------- plain
@@ -108,9 +149,15 @@ pub struct PlainParser {
     last_was_cr: bool,
     strip_control: bool,
     warned_truncate: bool,
+    warnings: Vec<Warning>,
 }
 
 impl PlainParser {
+    /// 取走累积的警告。
+    pub fn drain_warnings(&mut self, out: &mut Vec<Warning>) {
+        out.append(&mut self.warnings);
+    }
+
     pub fn new(strip_control: bool) -> Self {
         Self {
             buf: Vec::new(),
@@ -118,6 +165,7 @@ impl PlainParser {
             last_was_cr: false,
             strip_control,
             warned_truncate: false,
+            warnings: Vec::new(),
         }
     }
 
@@ -131,10 +179,9 @@ impl PlainParser {
                     self.buf.push(byte);
                     if self.buf.len() > MAX_LINE_BYTES {
                         if !self.warned_truncate {
-                            eprintln!(
-                                "subview: warning: 输入行超过 {} KiB，只保留尾部",
-                                MAX_LINE_BYTES / 1024
-                            );
+                            self.warnings.push(Warning::LineTruncated {
+                                limit_kib: MAX_LINE_BYTES / 1024,
+                            });
                             self.warned_truncate = true;
                         }
                         let cut = self.buf.len() - TAIL_BYTES;
@@ -251,6 +298,7 @@ pub struct JsonlParser {
     strip_control: bool,
     warned_at: Option<Instant>,
     warned_long_line: bool,
+    warnings: Vec<Warning>,
 }
 
 #[derive(serde::Deserialize)]
@@ -263,6 +311,11 @@ struct WireEvent {
 }
 
 impl JsonlParser {
+    /// 取走累积的警告。
+    pub fn drain_warnings(&mut self, out: &mut Vec<Warning>) {
+        out.append(&mut self.warnings);
+    }
+
     pub fn new(strip_control: bool) -> Self {
         Self {
             buf: Vec::new(),
@@ -270,6 +323,7 @@ impl JsonlParser {
             strip_control,
             warned_at: None,
             warned_long_line: false,
+            warnings: Vec::new(),
         }
     }
 
@@ -291,10 +345,9 @@ impl JsonlParser {
                 self.buf.push(byte);
                 if self.buf.len() > MAX_LINE_BYTES {
                     if !self.warned_long_line {
-                        eprintln!(
-                            "subview: warning: JSON 行超过 {} KiB，已丢弃",
-                            MAX_LINE_BYTES / 1024
-                        );
+                        self.warnings.push(Warning::JsonLineTooLong {
+                            limit_kib: MAX_LINE_BYTES / 1024,
+                        });
                         self.warned_long_line = true;
                     }
                     self.buf.clear();
@@ -312,14 +365,16 @@ impl JsonlParser {
         let event = match serde_json::from_str::<WireEvent>(&text) {
             Ok(event) => event,
             Err(_) => {
-                self.warn("无法解析 JSON 行，已忽略");
+                self.push_warning(Warning::JsonParseFailed);
                 return;
             }
         };
         match event.event.as_str() {
             "partial" | "final" => {
                 let Some(text) = event.text else {
-                    self.warn(&format!("{} 事件缺少 text 字段", event.event));
+                    self.push_warning(Warning::JsonMissingText {
+                        event: event.event.clone(),
+                    });
                     return;
                 };
                 let text = sanitize_text(&text, self.strip_control);
@@ -337,18 +392,20 @@ impl JsonlParser {
                 }
             }
             "clear" => out.push(Event::Clear),
-            other => self.warn(&format!("未知事件类型 {other:?}，已忽略")),
+            other => self.push_warning(Warning::JsonUnknownEvent {
+                event: other.to_string(),
+            }),
         }
     }
 
-    fn warn(&mut self, message: &str) {
+    fn push_warning(&mut self, warning: Warning) {
         let now = Instant::now();
         let allowed = match self.warned_at {
             Some(last) => now.duration_since(last) >= WARN_INTERVAL,
             None => true,
         };
         if allowed {
-            eprintln!("subview: warning: {message}");
+            self.warnings.push(warning);
             self.warned_at = Some(now);
         }
     }
@@ -580,5 +637,41 @@ mod tests {
     fn jsonl_strips_control_characters() {
         let events = parse_jsonl("{\"event\":\"final\",\"text\":\"a\\u001b[31mb\"}\n");
         assert_eq!(events, vec![Event::Final(caption("a[31mb"))]);
+    }
+
+    #[test]
+    fn plain_truncation_is_reported_as_warning() {
+        let mut parser = PlainParser::new(true);
+        let mut out = Vec::new();
+        let mut warnings = Vec::new();
+        parser.feed(&vec![b'x'; MAX_LINE_BYTES + 1], &mut out);
+        parser.drain_warnings(&mut warnings);
+        assert_eq!(
+            warnings,
+            vec![Warning::LineTruncated {
+                limit_kib: MAX_LINE_BYTES / 1024,
+            }]
+        );
+    }
+
+    #[test]
+    fn jsonl_parse_failure_is_reported_as_warning() {
+        let mut parser = JsonlParser::new(true);
+        let mut out = Vec::new();
+        let mut warnings = Vec::new();
+        parser.feed(b"not json\n", &mut out);
+        parser.drain_warnings(&mut warnings);
+        assert_eq!(warnings, vec![Warning::JsonParseFailed]);
+    }
+
+    #[test]
+    fn jsonl_unknown_event_is_reported_once_per_window() {
+        let mut parser = JsonlParser::new(true);
+        let mut out = Vec::new();
+        let mut warnings = Vec::new();
+        parser.feed(b"{\"event\":\"bogus\"}\n{\"event\":\"bogus\"}\n", &mut out);
+        parser.drain_warnings(&mut warnings);
+        // 限流窗口内只报一次。
+        assert_eq!(warnings.len(), 1);
     }
 }

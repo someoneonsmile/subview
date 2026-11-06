@@ -162,9 +162,9 @@ mic / 回环   whisper.cpp 等         stdin       stdout/tty
   （`Metrics(24, 32)` + 居中），再沿列方向堆叠。列整体右对齐：内容不满一窗时贴右边缘
   （竖排的 start 侧在右），满窗时最新的列在最左，旧列随新列出现向右滚出窗口；
   已有列内容不重排。窗口高度决定每列字数，宽度决定可见列数。换行表示另起一列：
-  每条字幕从新列的顶部开始，不与上一列续接。定稿/未定稿着色与横版一致：切列时按
-  字节偏移给每个字打 partial 标记；未定稿逐字用细字重 + 半透明白（alpha 差异直接进
-  覆盖率遮罩）。
+  每条字幕从新列的顶部开始，不与上一列续接。定稿/未定稿着色与横版一致：`compose`
+  先产出带 partial 标记的结构化行，切列时标记随行传递（不再依赖字节偏移）；
+  未定稿逐字用细字重 + 半透明白（alpha 差异直接进覆盖率遮罩）。
 - **标点**：逗号、顿号、句号按中文竖排惯例挪到字框右上角；冒号、分号、叹号、问号
   保持居中；拉丁字母直立，不旋转。
 - **共用逻辑**：背景条、阴影、linger 淡出、点击穿透、状态与主循环复用横版实现。
@@ -260,25 +260,40 @@ subview/
 ├── DESIGN.md
 ├── README.md
 ├── man/subview.1
-├── docs/protocol.md          # 协议规范（= 本文第 4 节展开）
+├── docs/
+│   ├── protocol.md          # 协议规范（= 本文第 4 节展开）
+│   └── refactor-plan.md     # 结构评审与重构记录
 ├── tests/
-│   └── cli.rs                # CLI 集成测试（含 pty / SIGPIPE 用例）
+│   └── cli.rs               # CLI 集成测试（含 pty / SIGPIPE 用例）
 └── src/
-    ├── main.rs               # 入口：isatty、模式选择、主循环、退出码
-    ├── cli.rs                # clap 定义与颜色判定
-    ├── protocol.rs           # 字节流 → Event（\r/\n 切分、UTF-8 容错、控制符过滤）
-    ├── reader.rs             # 读线程：解析 stdin → 共享状态 + 通知
-    ├── state.rs              # 字幕窗口状态：历史 + partial + speaker
-    ├── wrap.rs               # 显示宽度感知折行 + 悬挂缩进
-    ├── render/
-    │   ├── mod.rs            # Backend trait
-    │   ├── ansi.rs           # ANSI 序列拼接原语
-    │   ├── layout.rs         # 后端无关的物理行排版
-    │   ├── tui.rs            # 终端后端（alternate screen）
-    │   ├── raw.rs            # 原地重绘过滤器后端
-    │   ├── vertical.rs       # 竖排切列（字从上到下、列从右到左）
-    │   └── overlay.rs        # X11 透明悬浮窗后端（默认启用，含横版/竖版渲染）
-    └── signal.rs             # SIGPIPE / SIGINT / SIGTERM
+    ├── main.rs              # 入口：参数解析、退出码
+    ├── app.rs               # 运行模式解析（单一事实来源）
+    ├── cli.rs               # clap 定义与配置转换
+    ├── cli_types.rs         # build.rs 可 include 的 CLI 定义
+    ├── config.rs            # 渲染层 / 读线程的领域配置
+    ├── error.rs             # 启动错误与错误退出码
+    ├── protocol.rs          # 字节流 → Event + Warning（无 I/O 副作用）
+    ├── reader.rs            # 读线程：解析 stdin → 共享状态 + 警告输出
+    ├── state.rs             # 字幕窗口状态：历史 + partial + speaker
+    ├── signal.rs            # SIGPIPE / SIGINT / SIGTERM
+    ├── wrap.rs              # 显示宽度感知折行 + 悬挂缩进
+    ├── run/
+    │   ├── mod.rs           # 通用主循环 drive + Linger 淡出状态机
+    │   ├── terminal.rs      # 终端后端装配（--tui / --raw）
+    │   └── filter.rs        # 非终端纯文本过滤器
+    └── render/
+        ├── mod.rs           # Renderer trait（统一内容级接口）
+        ├── ansi.rs          # ANSI 序列拼接原语
+        ├── layout.rs        # 后端无关的物理行排版
+        ├── tui.rs           # 终端后端（alternate screen）
+        ├── raw.rs           # 原地重绘后端（--raw 且 stdout 是终端）
+        └── overlay/         # X11 透明悬浮窗后端（默认启用）
+            ├── mod.rs       # OverlayBackend：生命周期、帧循环、横竖版调度
+            ├── window.rs    # X11 资源与几何
+            ├── canvas.rs    # 像素层：背景 / 遮罩 / 混合 / 打包
+            ├── compose.rs   # 状态 → 连续文本流
+            ├── horizontal.rs# 横版绘制
+            └── vertical.rs  # 竖排切列与绘制
 ```
 
 依赖：
@@ -289,8 +304,13 @@ subview/
 - dev：`assert_cmd`、`predicates`
 - 不引入 async runtime
 
-线程模型：读线程解析 stdin 并更新共享状态，用 dirty 原子标志（终端后端）或
-`EventLoopProxy`（悬浮窗后端）唤醒主线程；主线程以约 16ms 的节奏节流重绘。
+模式解析集中在 `app::resolve`：输入是 CLI、stdin/stdout 是否终端、编译期能力，
+输出唯一的运行模式（Overlay / Tui / RawTty / PlainFilter）。`main` 只按结果分发。
+
+线程模型：读线程解析 stdin 并更新共享状态，用 `dirty` / `eof` 原子标志通知主线程；
+主线程用统一的 `run::drive` 以约 16ms 的节奏轮询，处理 linger 淡出与 EOF。
+终端后端与悬浮窗后端共用同一主循环，只实现 `Renderer::poll`（悬浮窗泵 X11 事件）
+与 `Renderer::draw`（自己管理输出介质尺寸）。
 
 ## 10. 里程碑与验收
 

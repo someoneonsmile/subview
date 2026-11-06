@@ -27,6 +27,7 @@ use x11rb::protocol::xproto::{
 use x11rb::rust_connection::RustConnection;
 
 use crate::config::{OverlayConfig, ReaderOptions};
+use crate::error::ExitCode;
 use crate::render::layout::Align;
 use crate::render::{Fade, Poll, Renderer};
 use crate::signal;
@@ -65,7 +66,7 @@ const OUTLINE_ALPHA: u8 = 120;
 /// 悬浮窗启动结果。
 pub enum Outcome {
     /// 正常退出，携带进程退出码。
-    Exited(i32),
+    Exited(ExitCode),
     /// 图形环境不可用，调用方可以回退到终端界面。
     Unavailable(String),
 }
@@ -86,8 +87,8 @@ pub fn run(config: &OverlayConfig, options: ReaderOptions) -> Outcome {
     ) {
         Ok(()) => Outcome::Exited(signal::exit_code()),
         Err(error) => {
-            eprintln!("subview: 悬浮窗渲染失败：{error}");
-            Outcome::Exited(1)
+            crate::ui::note(format!("悬浮窗渲染失败：{error}"));
+            Outcome::Exited(ExitCode::Runtime)
         }
     }
 }

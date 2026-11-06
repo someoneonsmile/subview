@@ -4,6 +4,7 @@ use std::io;
 
 use crate::cli::Cli;
 use crate::config::ReaderOptions;
+use crate::error::ExitCode;
 use crate::render::layout::Align;
 use crate::render::raw::RawRenderer;
 use crate::render::tui::TuiRenderer;
@@ -18,21 +19,21 @@ enum Screen {
 }
 
 /// 终端界面（备用屏幕）。
-pub fn run_tui(cli: &Cli, options: ReaderOptions) -> i32 {
+pub fn run_tui(cli: &Cli, options: ReaderOptions) -> ExitCode {
     run(cli, options, Screen::Alternate)
 }
 
 /// 原地重绘（`--raw` 且输出到终端）。
-pub fn run_raw(cli: &Cli, options: ReaderOptions) -> i32 {
+pub fn run_raw(cli: &Cli, options: ReaderOptions) -> ExitCode {
     run(cli, options, Screen::Inline)
 }
 
-fn run(cli: &Cli, options: ReaderOptions, screen: Screen) -> i32 {
+fn run(cli: &Cli, options: ReaderOptions, screen: Screen) -> ExitCode {
     match stream_loop(cli, options, screen) {
         Ok(()) => crate::signal::exit_code(),
         Err(error) => {
-            eprintln!("subview: {error}");
-            1
+            crate::ui::note(error);
+            ExitCode::Runtime
         }
     }
 }

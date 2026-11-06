@@ -13,6 +13,7 @@ mod render;
 mod run;
 mod signal;
 mod state;
+mod ui;
 mod wrap;
 
 use std::io::{self, IsTerminal};
@@ -24,17 +25,17 @@ use cli::Cli;
 #[cfg(feature = "overlay")]
 use config::OverlayConfig;
 use config::{ReaderOptions, TextPolicy};
-use error::StartupError;
+use error::{ExitCode, StartupError};
 
 fn main() {
     let code = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).unwrap_or_else(|_| {
-        eprintln!("subview: 内部错误，已中止");
-        1
+        ui::note("内部错误，已中止");
+        ExitCode::Runtime
     });
-    std::process::exit(code);
+    std::process::exit(code.as_i32());
 }
 
-fn run() -> i32 {
+fn run() -> ExitCode {
     let cli = Cli::parse();
     signal::install();
 
@@ -51,17 +52,13 @@ fn run() -> i32 {
     ) {
         Ok(mode) => {
             if fallback_hint && mode == Mode::Tui {
-                eprintln!(
-                    "subview: 该二进制未编译悬浮窗支持（--no-default-features），回退到终端界面"
-                );
+                ui::note("该二进制未编译悬浮窗支持（--no-default-features），回退到终端界面");
             }
             mode
         }
         Err(error) => {
             if fallback_hint && error == StartupError::TuiNeedsTty {
-                eprintln!(
-                    "subview: 该二进制未编译悬浮窗支持（--no-default-features），回退到终端界面"
-                );
+                ui::note("该二进制未编译悬浮窗支持（--no-default-features），回退到终端界面");
             }
             return app::report(&error);
         }
@@ -70,8 +67,8 @@ fn run() -> i32 {
     let reader_options = ReaderOptions::from(&cli);
 
     if cli.debug {
-        eprintln!(
-            "subview: mode={} format={:?} lines={} size={:?} align={:?} linger={} color={}",
+        ui::note(format!(
+            "mode={} format={:?} lines={} size={:?} align={:?} linger={} color={}",
             mode_label(mode, &cli),
             reader_options.format,
             cli.lines,
@@ -79,7 +76,7 @@ fn run() -> i32 {
             cli.align,
             cli.linger,
             !cli.no_color
-        );
+        ));
     }
 
     match mode {
@@ -104,7 +101,7 @@ fn mode_label(mode: Mode, cli: &Cli) -> &'static str {
 }
 
 /// 默认模式：尝试桌面悬浮窗，不可用时按规则回退。
-fn run_overlay(cli: &Cli, options: ReaderOptions) -> i32 {
+fn run_overlay(cli: &Cli, options: ReaderOptions) -> ExitCode {
     #[cfg(feature = "overlay")]
     {
         let config = OverlayConfig::from(cli);
@@ -113,11 +110,11 @@ fn run_overlay(cli: &Cli, options: ReaderOptions) -> i32 {
             render::overlay::Outcome::Unavailable(reason) => {
                 // 竖版只有悬浮窗后端支持，不能静默回退成横版终端界面。
                 if cli.vertical {
-                    eprintln!("subview: 竖版界面需要桌面悬浮窗（X11）：{reason}");
-                    return error::ExitCode::Runtime.as_i32();
+                    ui::note(format!("竖版界面需要桌面悬浮窗（X11）：{reason}"));
+                    return ExitCode::Runtime;
                 }
-                eprintln!("subview: {reason}");
-                eprintln!("subview: 回退到终端界面（可用 --tui 显式指定）");
+                ui::note(&reason);
+                ui::note("回退到终端界面（可用 --tui 显式指定）");
                 if !io::stdout().is_terminal() {
                     return app::report(&StartupError::TuiNeedsTty);
                 }

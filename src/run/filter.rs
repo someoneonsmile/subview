@@ -3,12 +3,13 @@
 use std::io::{self, Read, Write};
 
 use crate::config::ReaderOptions;
+use crate::error::ExitCode;
 use crate::protocol::{Event, Parser, Warning};
 use crate::signal;
 use crate::state::speaker_prefix;
 
 /// 运行纯文本过滤器，返回进程退出码。
-pub fn run(options: ReaderOptions) -> i32 {
+pub fn run(options: ReaderOptions) -> ExitCode {
     let stdin = io::stdin();
     let mut reader = stdin.lock();
     let stdout = io::stdout();
@@ -29,8 +30,8 @@ pub fn run(options: ReaderOptions) -> i32 {
                 report_warnings(&mut parser, &mut warnings);
                 write_final_lines(&mut out, &events);
                 if let Err(error) = out.flush() {
-                    eprintln!("subview: {error}");
-                    return 1;
+                    crate::ui::note(error);
+                    return ExitCode::Runtime;
                 }
                 break;
             }
@@ -40,14 +41,14 @@ pub fn run(options: ReaderOptions) -> i32 {
                 report_warnings(&mut parser, &mut warnings);
                 write_final_lines(&mut out, &events);
                 if let Err(error) = out.flush() {
-                    eprintln!("subview: {error}");
-                    return 1;
+                    crate::ui::note(error);
+                    return ExitCode::Runtime;
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             Err(error) => {
-                eprintln!("subview: {error}");
-                return 1;
+                crate::ui::note(error);
+                return ExitCode::Runtime;
             }
         }
     }
@@ -59,7 +60,7 @@ pub fn run(options: ReaderOptions) -> i32 {
 fn report_warnings(parser: &mut Parser, warnings: &mut Vec<Warning>) {
     parser.drain_warnings(warnings);
     for warning in warnings.drain(..) {
-        eprintln!("subview: warning: {warning}");
+        crate::ui::warn(&warning);
     }
 }
 

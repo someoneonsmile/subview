@@ -7,6 +7,8 @@
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
+use crate::error::ExitCode;
+
 static STOP: AtomicBool = AtomicBool::new(false);
 static SIGNAL: AtomicI32 = AtomicI32::new(0);
 
@@ -36,8 +38,10 @@ pub fn signal_number() -> i32 {
     SIGNAL.load(Ordering::SeqCst)
 }
 
-/// 由信号导致的进程退出码（128 + 信号编号）；没有收到信号时返回 0。
-pub fn exit_code() -> i32 {
-    let signal = signal_number();
-    if signal == 0 { 0 } else { 128 + signal }
+/// 由信号导致的进程退出码（128 + 信号编号）；没有收到信号时返回 [`ExitCode::Ok`]。
+pub fn exit_code() -> ExitCode {
+    match signal_number() {
+        0 => ExitCode::Ok,
+        signal => ExitCode::Signal(signal),
+    }
 }

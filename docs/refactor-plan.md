@@ -562,16 +562,17 @@ src/
 | 2 拆分 overlay | 完成 | `overlay.rs`（1101 行）拆为 `overlay/{mod,window,canvas,compose,horizontal,vertical}.rs`；`render/vertical.rs` 并入 `overlay/vertical.rs`；画布纯函数集中到 `canvas.rs` |
 | 4 收尾 | 完成 | 更新 `DESIGN.md` 第 9 节与 `AGENTS.md` 目录结构；`--size` 语义保留不变并在本文档记录 |
 | 5 补充 | 完成 | **B4 结构化 compose**：`compose` 改为结构化行 + 行级 partial 标记，竖排切列不再依赖字节偏移；新增 compose / vertical 测试 8 个（默认特性单元测试 89 → 98） |
+| 6 补充 | 完成 | **R2 / R3**：退出码统一为 `error::ExitCode`（新增 `Ok` / `Signal(i32)`），`signal::exit_code` 返回 `ExitCode`；新增 `ui.rs` 收敛全部用户输出（`eprintln!` 从 25 处降到 4 处，仅 `ui.rs` 内）；运行时错误保持 `io::Error` |
 
 验收结果：`just ci` 全绿（fmt-check、两种 feature 的严格 clippy、两种 feature 的测试、
 release 构建）；`tests/cli.rs` 15 个集成测试未修改断言全部通过。
 
 未落地项（有意保留）：
 
-- **R2 的完整 `AppError`**：当前用 `error.rs` 的 `ExitCode` + `StartupError` 覆盖启动路径，
-  运行时错误仍是 `io::Error` / 字符串。收益不足以支撑全链路改造，暂不引入统一错误枚举。
-- **R3 统一 UI 层**：`protocol` 的两处警告已收敛到 `reader` / `filter`，其余 `eprintln!`
-  集中在错误路径，不再抽 `ui.rs`。
+- **R2 的 `AppError` 枚举**：退出码已统一为 `error::ExitCode`（含 `Signal`），错误呈现统一走 `ui`；
+  运行时错误仍用 `io::Error`——来源单一、无需跨层转换，不再引入统一错误枚举。
+- **R3 统一 UI 层**：已落地（`ui.rs`），`protocol` / `reader` / `filter` / 入口 / 悬浮窗的
+  用户输出全部收敛，`eprintln!` 只存在于 `ui.rs`。
 - **B5 内部重命名**：`--size` 的用户语义不变；`OverlayConfig::size` 的注释已说明
   “横版=窗口宽、竖版=窗口高”，不在代码里拆成两个字段（一个 CLI 参数映射两义，
   拆字段反而增加转换复杂度）。

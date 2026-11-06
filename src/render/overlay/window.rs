@@ -172,14 +172,14 @@ impl OverlayBackend {
             .map_err(|error| format!("无法刷新 X11 连接：{error}"))?;
 
         if config.debug {
-            eprintln!(
-                "subview: overlay 窗口 id=0x{window:x} geometry={width}x{height}+{x}+{y} layout={} visual=0x{visual_id:x} lsb_first={lsb_first}",
+            crate::ui::note(format!(
+                "overlay 窗口 id=0x{window:x} geometry={width}x{height}+{x}+{y} layout={} visual=0x{visual_id:x} lsb_first={lsb_first}",
                 if config.vertical {
                     "vertical"
                 } else {
                     "horizontal"
                 }
-            );
+            ));
         }
 
         Ok(Self {
@@ -234,8 +234,8 @@ fn warn_if_no_compositor(connection: &RustConnection) {
         Ok(owner == x11rb::NONE)
     })();
     if matches!(result, Ok(true)) {
-        eprintln!("subview: warning: 未检测到合成器（compositor），透明背景可能显示为黑色");
-        eprintln!("subview: 提示：启动 picom / mutter / kwin 等合成器以启用透明");
+        crate::ui::warn("未检测到合成器（compositor），透明背景可能显示为黑色");
+        crate::ui::note("提示：启动 picom / mutter / kwin 等合成器以启用透明");
     }
 }
 

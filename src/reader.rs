@@ -64,7 +64,7 @@ where
 fn report_warnings(parser: &mut Parser, warnings: &mut Vec<Warning>) {
     parser.drain_warnings(warnings);
     for warning in warnings.drain(..) {
-        eprintln!("subview: warning: {warning}");
+        crate::ui::warn(&warning);
     }
 }
 

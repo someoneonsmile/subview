@@ -97,7 +97,7 @@ mod tests {
         assert_eq!(cli.format, FormatArg::Plain);
         assert_eq!(cli.lines, 2);
         assert_eq!(cli.align, AlignArg::Left);
-        assert_eq!(cli.linger, 0.0);
+        assert_eq!(cli.linger, 5.0);
         assert!(!cli.vertical);
         assert_eq!(cli.size, None);
         assert_eq!(cli.position, PositionArg::Start);

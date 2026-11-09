@@ -48,7 +48,7 @@ pub struct OverlayConfig {
     pub vertical: bool,
     /// 背景条不透明度（0–255）。
     pub background_alpha: u8,
-    /// 最后一条字幕驻留秒数（0 = 常驻）。
+    /// 最后一条字幕驻留秒数（默认 5，0 = 常驻）。
     pub linger: f64,
     /// 打印调试信息到 stderr。
     pub debug: bool,

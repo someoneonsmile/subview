@@ -55,7 +55,7 @@ arecord \-q \-f S16_LE \-r 16000 \-c 1 | whisper\-stream \-m model.bin | subview
 竖版下不生效。
 .TP
 .BI \-\-linger " SEC"
-最后一条字幕驻留多少秒后淡出，默认 0（常驻）。
+最后一条字幕驻留多少秒后淡出并清空显示，默认 5，0 表示常驻。
 .TP
 .B \-\-no\-color
 关闭终端的颜色与文字属性。同时遵守

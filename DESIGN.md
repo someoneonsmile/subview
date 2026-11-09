@@ -183,7 +183,7 @@ subview [OPTIONS]
   --size N                  折行宽度（终端，列）/ 窗口尺寸（悬浮窗，像素：
                             横版为宽、竖版为高；另一维自动）
   --align left|center       水平对齐（默认 left）
-  --linger SEC              最后一条 final 后逐行淡出并清屏的秒数（默认 0 = 常驻）
+  --linger SEC              最后一条 final 后逐行淡出并清屏的秒数（默认 5，0 = 常驻）
   --no-color                关闭终端的颜色与文字属性（同时遵守 NO_COLOR；悬浮窗配色不受影响）
 后端
   --raw                     纯 ANSI 过滤器模式

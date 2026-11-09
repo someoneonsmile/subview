@@ -64,8 +64,8 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t = AlignArg::Left, value_name = "ALIGN")]
     pub align: AlignArg,
 
-    /// 最后一条字幕驻留多少秒后淡出（0 = 常驻）
-    #[arg(long, default_value_t = 0.0, value_name = "SEC", value_parser = parse_linger)]
+    /// 最后一条字幕驻留多少秒后淡出并清空（0 = 常驻）
+    #[arg(long, default_value_t = 5.0, value_name = "SEC", value_parser = parse_linger)]
     pub linger: f64,
 
     /// 关闭终端的颜色与文字属性

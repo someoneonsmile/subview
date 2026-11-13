@@ -1,4 +1,8 @@
 # subview — 把标准输入的字幕流实时显示到屏幕
+BINARY := "subview"
+AUR_PKG := "subview-bin"
+AUR_NIGHTLY_PKG := "subview-nightly-bin"
+
 # https://github.com/cargo/just
 
 _default:
@@ -76,18 +80,18 @@ SHELL_HELP_DIR := "shell_help"
 # 安装到系统（/usr/local/bin/subview + shell 补全 + man）
 install:
     SHELL_HELP_DIR={{ SHELL_HELP_DIR }} cargo build --release
-    sudo install -Dm755 target/release/subview "{{ DESTDIR }}{{ BINDIR }}/subview"
-    sudo install -Dm644 {{ SHELL_HELP_DIR }}/complete/subview.bash "{{ DESTDIR }}{{ DATADIR }}/bash-completion/completions/subview"
-    sudo install -Dm644 {{ SHELL_HELP_DIR }}/complete/_subview "{{ DESTDIR }}{{ DATADIR }}/zsh/site-functions/_subview"
-    sudo install -Dm644 {{ SHELL_HELP_DIR }}/complete/subview.fish "{{ DESTDIR }}{{ DATADIR }}/fish/vendor_completions.d/subview.fish"
+    sudo install -Dm755 target/release/{{ BINARY }} "{{ DESTDIR }}{{ BINDIR }}/{{ BINARY }}"
+    sudo install -Dm644 {{ SHELL_HELP_DIR }}/complete/{{ BINARY }}.bash "{{ DESTDIR }}{{ DATADIR }}/bash-completion/completions/{{ BINARY }}"
+    sudo install -Dm644 {{ SHELL_HELP_DIR }}/complete/_{{ BINARY }} "{{ DESTDIR }}{{ DATADIR }}/zsh/site-functions/_{{ BINARY }}"
+    sudo install -Dm644 {{ SHELL_HELP_DIR }}/complete/{{ BINARY }}.fish "{{ DESTDIR }}{{ DATADIR }}/fish/vendor_completions.d/{{ BINARY }}.fish"
     sudo install -Dm644 man/subview.1 "{{ DESTDIR }}{{ MANDIR }}/man1/subview.1"
 
 # 从系统中卸载 subview 及其补全和 man 手册页
 uninstall:
-    sudo rm -f "{{ DESTDIR }}{{ BINDIR }}/subview"
-    sudo rm -f "{{ DESTDIR }}{{ DATADIR }}/bash-completion/completions/subview"
-    sudo rm -f "{{ DESTDIR }}{{ DATADIR }}/zsh/site-functions/_subview"
-    sudo rm -f "{{ DESTDIR }}{{ DATADIR }}/fish/vendor_completions.d/subview.fish"
+    sudo rm -f "{{ DESTDIR }}{{ BINDIR }}/{{ BINARY }}"
+    sudo rm -f "{{ DESTDIR }}{{ DATADIR }}/bash-completion/completions/{{ BINARY }}"
+    sudo rm -f "{{ DESTDIR }}{{ DATADIR }}/zsh/site-functions/_{{ BINARY }}"
+    sudo rm -f "{{ DESTDIR }}{{ DATADIR }}/fish/vendor_completions.d/{{ BINARY }}.fish"
     sudo rm -f "{{ DESTDIR }}{{ MANDIR }}/man1/subview.1"
 
 # 监听文件变更，自动 check
@@ -116,7 +120,7 @@ aur-push:
     git commit -m "chore: update AUR package" || true
     TMP=$(mktemp -d)
     trap 'rm -rf "$TMP"' EXIT
-    git clone ssh://aur@aur.archlinux.org/subview-bin.git "$TMP"
+    git clone "ssh://aur@aur.archlinux.org/{{ AUR_PKG }}.git" "$TMP"
     cp aur/PKGBUILD aur/.SRCINFO "$TMP/"
     git -C "$TMP" add -A
     git -C "$TMP" commit -m "chore: update AUR package" || true
@@ -133,7 +137,7 @@ aur-release VERSION:
     git commit -m "chore: update AUR to v{{VERSION}}" || true
     TMP=$(mktemp -d)
     trap 'rm -rf "$TMP"' EXIT
-    git clone ssh://aur@aur.archlinux.org/subview-bin.git "$TMP"
+    git clone "ssh://aur@aur.archlinux.org/{{ AUR_PKG }}.git" "$TMP"
     cp aur/PKGBUILD aur/.SRCINFO "$TMP/"
     git -C "$TMP" add -A
     git -C "$TMP" commit -m "chore: update AUR to v{{VERSION}}" || true
@@ -154,7 +158,7 @@ aur-nightly-push:
     git commit -m "chore: update nightly AUR package" || true
     TMP=$(mktemp -d)
     trap 'rm -rf "$TMP"' EXIT
-    git clone ssh://aur@aur.archlinux.org/subview-nightly-bin.git "$TMP"
+    git clone "ssh://aur@aur.archlinux.org/{{ AUR_NIGHTLY_PKG }}.git" "$TMP"
     cp aur-nightly/PKGBUILD aur-nightly/.SRCINFO "$TMP/"
     git -C "$TMP" add -A
     git -C "$TMP" commit -m "chore: update nightly AUR package" || true
@@ -182,7 +186,7 @@ aur-nightly-release:
     git commit -m "chore: update nightly AUR to ${PKGVER}" || true
     TMP=$(mktemp -d)
     trap 'rm -rf "$TMP"' EXIT
-    git clone ssh://aur@aur.archlinux.org/subview-nightly-bin.git "$TMP"
+    git clone "ssh://aur@aur.archlinux.org/{{ AUR_NIGHTLY_PKG }}.git" "$TMP"
     cp aur-nightly/PKGBUILD aur-nightly/.SRCINFO "$TMP/"
     git -C "$TMP" add -A
     git -C "$TMP" commit -m "chore: update nightly AUR to ${PKGVER}" || true

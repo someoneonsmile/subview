@@ -11,12 +11,18 @@ use std::error::Error;
 use std::fs::create_dir_all;
 
 use clap::CommandFactory;
-// cli_types.rs 已经引入 ValueEnum（include! 到本文件作用域），这里只能用匿名导入，避免重名导入报错。
-use clap::ValueEnum as _;
 use clap_complete::{Shell, generate_to};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let outdir = match env::var_os("SHELL_HELP_DIR") {
+    // 补全内容由 clap 定义决定；这两个文件变了才需要重新生成。
+    println!("cargo:rerun-if-changed=src/cli_types.rs");
+    println!("cargo:rerun-if-changed=build.rs");
+    // 环境变量本身也要触发重跑，否则先 cargo build 再 SHELL_HELP_DIR=... cargo build
+    // 会命中缓存、不生成补全。
+    println!("cargo:rerun-if-env-changed=SHELL_HELP_DIR");
+
+    // 空值视为未设置：否则 `SHELL_HELP_DIR= cargo build` 会把相对路径解析到源码树根。
+    let outdir = match env::var_os("SHELL_HELP_DIR").filter(|value| !value.is_empty()) {
         None => return Ok(()),
         Some(outdir) => std::path::PathBuf::from(outdir),
     };
@@ -24,10 +30,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut cmd = Cli::command();
     let bin_name = cmd.get_name().to_owned();
 
-    // 为所有支持的 shell 生成补全文件
+    // 项目只支持 Unix，补全只生成 Unix 下常用的 shell，不生成 PowerShell。
+    let shells = [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::Elvish];
     let complete_dir = outdir.join("complete");
     create_dir_all(&complete_dir)?;
-    for &shell in Shell::value_variants() {
+    for shell in shells {
         generate_to(shell, &mut cmd, &bin_name, &complete_dir)?;
     }
 

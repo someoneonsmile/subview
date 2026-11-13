@@ -8,6 +8,7 @@ pkgdesc="Display a subtitle stream from stdin as a desktop overlay"
 arch=('x86_64' 'aarch64')
 url="https://github.com/someoneonsmile/subview"
 license=('MIT')
+options=('!strip' '!debug')
 
 _source_base="${url}/releases/download/v${pkgver}"
 
